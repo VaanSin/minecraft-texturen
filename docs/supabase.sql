@@ -37,6 +37,14 @@ create policy "eigene Themen aendern" on public.themes for update using (auth.ui
 drop policy if exists "eigene Themen loeschen" on public.themes;
 create policy "eigene Themen loeschen" on public.themes for delete using (auth.uid() = owner);
 
+-- Zugriff fuer die Daten-Schnittstelle (falls "Automatically expose new tables" aus ist);
+-- was jemand wirklich sehen/aendern darf, regeln die Policies oben.
+grant usage on schema public to anon, authenticated;
+grant select on public.profiles to anon, authenticated;
+grant insert on public.profiles to authenticated;
+grant select on public.themes to anon, authenticated;
+grant insert, update, delete on public.themes to authenticated;
+
 -- Downloads zaehlen (darf jeder, aendert sonst nichts)
 create or replace function public.zaehle_download(theme uuid) returns void
   language sql security definer set search_path = public as
