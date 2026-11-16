@@ -1,0 +1,15 @@
+package de.mctexturen.themenwechsel;
+
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+
+/** Fabric: /thema als Client-Befehl. ERZEUGT aus einer Vorlage (Minecraft-Namen im intermediary-Format). */
+public final class ThemenwechselFabric implements ClientModInitializer {
+    @Override
+    public void onInitializeClient() {
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, kontext) -> dispatcher.register(
+                Befehl.<FabricClientCommandSource>baue(new Spiel(),
+                        (quelle, text) -> quelle.sendFeedback(${Component}.${Component.literal}(text)))));
+    }
+}

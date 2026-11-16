@@ -1,0 +1,20 @@
+package de.mctexturen.themenwechsel;
+
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.RegisterClientCommandsEvent;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.loading.FMLEnvironment;
+
+/** Forge: /thema als Client-Befehl. ERZEUGT aus einer Vorlage (Minecraft-Namen im SRG-Format). */
+@Mod("themenwechsel")
+public final class ThemenwechselForge {
+    public ThemenwechselForge() {
+        if (FMLEnvironment.dist == Dist.CLIENT) MinecraftForge.EVENT_BUS.addListener(ThemenwechselForge::befehle);
+    }
+
+    private static void befehle(RegisterClientCommandsEvent e) {
+        e.getDispatcher().register(Befehl.<${CommandSourceStack}>baue(new Spiel(),
+                (quelle, text) -> quelle.${CommandSourceStack.sendSystemMessage}(${Component}.${Component.literal}(text))));
+    }
+}

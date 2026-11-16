@@ -1,0 +1,19 @@
+package de.mctexturen.themenwechsel;
+
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
+import net.neoforged.neoforge.common.NeoForge;
+
+/** NeoForge: /thema als Client-Befehl. ERZEUGT aus einer Vorlage. */
+@Mod(value = "themenwechsel", dist = Dist.CLIENT)
+public final class ThemenwechselNeo {
+    public ThemenwechselNeo() {
+        NeoForge.EVENT_BUS.addListener(ThemenwechselNeo::befehle);
+    }
+
+    private static void befehle(RegisterClientCommandsEvent e) {
+        e.getDispatcher().register(Befehl.<${CommandSourceStack}>baue(new Spiel(),
+                (quelle, text) -> quelle.${CommandSourceStack.sendSystemMessage}(${Component}.${Component.literal}(text))));
+    }
+}

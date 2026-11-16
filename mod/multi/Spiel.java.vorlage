@@ -1,0 +1,44 @@
+package de.mctexturen.themenwechsel;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
+/**
+ * Zugriff auf Minecrafts Ressourcenpakete. ERZEUGT von tools/baue-alle.mjs -
+ * die Namen in ${...} werden pro Version und Loader eingesetzt (Mojang, SRG oder intermediary).
+ */
+final class Spiel implements Befehl.Spiel {
+    @Override
+    public Collection<String> verfuegbar() {
+        ${PackRepository} r = ${Minecraft}.${Minecraft.getInstance}().${Minecraft.getResourcePackRepository}();
+        r.${PackRepository.reload}(); // neue Themen aus dem Editor sofort finden
+        return new ArrayList<>(r.${PackRepository.getAvailableIds}());
+    }
+
+    @Override
+    public Collection<String> ausgewaehlt() {
+        return new ArrayList<>(${Minecraft}.${Minecraft.getInstance}().${Minecraft.getResourcePackRepository}().${PackRepository.getSelectedIds}());
+    }
+
+    @Override
+    public void setze(List<String> paketIds) {
+        ${Minecraft} mc = ${Minecraft}.${Minecraft.getInstance}();
+        ${PackRepository} r = mc.${Minecraft.getResourcePackRepository}();
+        r.${PackRepository.setSelected}(paketIds);
+//#if UPDATE
+        mc.${Minecraft.options}.${Options.updateResourcePacks}(r); // speichert options.txt und laedt neu
+//#else
+        // Aeltere Versionen: dasselbe wie der "Fertig"-Knopf im Ressourcenpaket-Menue
+        ${Options} o = mc.${Minecraft.options};
+        List<String> liste = o.${Options.resourcePacks};
+        liste.clear();
+        for (Object e : r.${PackRepository.getSelectedPacks}()) {
+            ${Pack} p = (${Pack}) e;
+            if (!p.${Pack.isFixedPosition}()) liste.add(p.${Pack.getId}());
+        }
+        o.${Options.save}();
+        mc.${Minecraft.reloadResourcePacks}();
+//#endif
+    }
+}

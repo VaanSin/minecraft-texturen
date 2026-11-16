@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Minecraft Texturen</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo" src="icon.png" alt="">
+      <div>
+        <h1 class="rainbow-text">Minecraft Texturen</h1>
+        <div class="sub">Pixel malen – ganz einfach</div>
+      </div>
+    </div>
+    <nav class="apptabs" aria-label="Bereiche">
+      <button class="apptab active">🧱 Minecraft Texturen</button>
+      <button class="apptab soon" disabled title="Hier kommen später noch andere Sachen dazu">🚀 Bald mehr …</button>
+    </nav>
+    <div class="top-actions">
+      <div class="profile-picker">
+        <button id="profileBtn" class="pill" aria-haspopup="true" title="Minecraft-Profil"><span>🎮</span><span id="profileName">…</span><span class="caret">▾</span></button>
+        <div id="profileMenu" class="menu" hidden></div>
+      </div>
+      <div class="theme-picker">
+        <button id="themeBtn" class="pill theme-btn" aria-haspopup="true"><span class="dot"></span><span id="themeName">…</span><span class="caret">▾</span></button>
+        <div id="themeMenu" class="menu" hidden></div>
+      </div>
+      <button id="kontoBtn" class="pill konto-btn" title="Online-Konto: Themen auf jedem PC und von anderen"><span>👤</span><span id="kontoName">Anmelden</span></button>
+      <button id="saveBtn" class="btn save" disabled title="Speichern (Strg+S)">💾 Speichern</button>
+      <button id="settingsBtn" class="iconbtn" title="Einstellungen">⚙️</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Texturen-Auswahl -->
+    <aside class="panel browser">
+      <div class="search">
+        <span>🔎</span>
+        <input id="search" type="search" placeholder="Textur suchen, z. B. diamond" autocomplete="off">
+      </div>
+      <div id="cats" class="cats"></div>
+      <div id="grid" class="grid" tabindex="-1"></div>
+      <div id="gridCount" class="grid-count"></div>
+    </aside>
+
+    <!-- Malfläche -->
+    <section class="panel stage">
+      <div class="doc-bar">
+        <div class="doc-title">
+          <div id="docName" class="doc-name">Keine Textur geöffnet</div>
+          <div id="docPath" class="doc-path"></div>
+        </div>
+        <div id="docBadges" class="badges"></div>
+        <div class="doc-actions">
+          <button id="undoBtn" class="iconbtn sm" title="Rückgängig (Strg+Z)">↩️</button>
+          <button id="redoBtn" class="iconbtn sm" title="Wiederholen (Strg+Y)">↪️</button>
+          <span class="sep"></span>
+          <button id="zoomOut" class="iconbtn sm" title="Kleiner (-)">➖</button>
+          <span id="zoomLabel" class="zoom-label">100 %</span>
+          <button id="zoomIn" class="iconbtn sm" title="Größer (+)">➕</button>
+          <button id="fitBtn" class="iconbtn sm" title="Einpassen (0)">🖼️</button>
+          <button id="gridBtn" class="iconbtn sm" title="Pixelraster an/aus (#)">▦</button>
+          <span class="sep"></span>
+          <div class="image-picker">
+            <button id="imageBtn" class="btn small" title="Spiegeln, drehen, umfärben …">🧰 Bild ▾</button>
+            <div id="imageMenu" class="menu" hidden></div>
+          </div>
+          <button id="growBtn" class="btn small grow" title="Mehr Pixel zum Malen">✨ Mehr Pixel</button>
+          <button id="revertBtn" class="btn small ghost" title="Zurück zum Minecraft-Original">♻️ Original</button>
+        </div>
+      </div>
+      <div class="stage-body">
+        <div id="tools" class="tools"></div>
+        <div id="canvasWrap" class="canvas-wrap">
+          <canvas id="view"></canvas>
+          <div id="welcome" class="welcome">
+            <div class="welcome-card">
+              <div class="welcome-emoji">🎨</div>
+              <h2>Hallo! Such dir links eine Textur aus.</h2>
+              <p>Blöcke, Items, Mobs, Rüstung, die Hotbar … alles ist da.</p>
+              <ul>
+                <li>✏️ Malen mit links, 🖐️ Verschieben mit rechts, 🖱️ Mausrad zum Zoomen</li>
+                <li>🎯 Klick rechts auf eine Farbe: damit malen oder überall ersetzen</li>
+                <li>💾 Beim Speichern wählst du dein Minecraft-Profil – <code>/thema</code> kommt automatisch mit</li>
+                <li>🎮 Im Spiel wechseln mit <code id="cmdHint">/thema meinthema</code> oder <code>/thema normal</code></li>
+              </ul>
+            </div>
+          </div>
+          <div id="readonly" class="readonly" hidden>👀 Das sind die Original-Texturen. Zum Bemalen oben ein Thema wählen.</div>
+          <div id="hoverInfo" class="hover-info" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Farben und 3D -->
+    <aside class="panel side">
+      <section class="card color-card">
+        <h3>🎨 Farbe</h3>
+        <div class="color-now">
+          <div class="swatch big checker"><div id="curSwatch"></div></div>
+          <div class="color-inputs">
+            <label class="native-pick" title="Farbe aussuchen"><input id="colorInput" type="color" value="#4fff23"><span>Farbe wählen</span></label>
+            <input id="hexInput" class="hex" value="#4FFF23" maxlength="7" spellcheck="false">
+          </div>
+        </div>
+        <label class="density">
+          <span>Dichte <b id="alphaLabel">100 %</b></span>
+          <input id="alphaInput" type="range" min="0" max="255" value="255">
+        </label>
+        <div class="mini-title">Schnellfarben</div>
+        <div id="quickColors" class="swatches"></div>
+        <div class="mini-title">Zuletzt benutzt</div>
+        <div id="recentColors" class="swatches"></div>
+      </section>
+
+      <section class="card palette-card">
+        <h3>🌈 Farben in dieser Textur <span id="paletteCount" class="count"></span></h3>
+        <div id="palette" class="swatches palette"></div>
+        <div class="hint">Auf eine Farbe klicken: damit malen oder ersetzen</div>
+      </section>
+
+      <section class="card view3d-card" id="view3dCard">
+        <h3>🧊 3D-Ansicht <select id="modelSelect" title="Modell"></select></h3>
+        <div id="view3d" class="view3d"><div class="view3d-empty">Für Blöcke und Mobs gibt es hier eine 3D-Ansicht.</div></div>
+      </section>
+    </aside>
+  </main>
+
+  <!-- Hinweise unten links -->
+  <div id="warnings" class="warnings"></div>
+
+  <!-- Farb-Menue -->
+  <div id="colorMenu" class="popover" hidden></div>
+  <div id="toasts" class="toasts"></div>
+  <div id="modalRoot"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

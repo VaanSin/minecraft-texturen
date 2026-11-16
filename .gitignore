@@ -1,0 +1,14 @@
+# Baupakete
+release/
+mod/build/
+node_modules/
+
+# Persoenliche Vorlagen bleiben lokal (die oeffentliche Version hat keine fertigen Themen)
+editor/vorlagen/
+editor/tools/vorlagen/
+editor/Minecraft Texturen.vbs
+
+# Sonstiges
+*.log
+.DS_Store
+Thumbs.db
