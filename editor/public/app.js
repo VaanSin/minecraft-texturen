@@ -4,7 +4,7 @@ import { toHex, fromHex, css, keyOf, unkey, percent, rainbowSort, QUICK, hsl as 
 import { PixelEditor, isTyping } from './editor.js';
 import { computeWarnings, describeAlpha } from './warnings.js';
 import { Viewer3D } from './viewer3d.js';
-import { parsePrompt, render as kiRender, styleFromPalette, paletteFromImage, pixelate, ideas, playerPreview, pretty, toHex as kiHex } from './ki.js';
+import { parsePrompt, drafts as kiDrafts, styleFromPalette, paletteFromImage, pixelate, ideas, playerPreview, pretty, toHex as kiHex } from './ki.js';
 import { frameCount, frameHeight, getFrame, joinFrames, canAnimate, speedText, EFFECTS, makeEffect, blend, timeline } from './animation.js';
 
 const $ = (s) => document.querySelector(s);
@@ -1353,7 +1353,9 @@ function animHelp() {
 
 // ---------- Textur-KI (ohne Internet) ----------
 let kiImage = null; // { img, palette, name }
+const kiEdit = { removed: new Set(), added: [] }; // Ziele, die man im Fenster weggeklickt/hinzugefuegt hat
 const swatches = (cols) => cols.map((c) => `<i class="ki-sw" style="background:${c}"></i>`).join('');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Bild-Datei lesen (max. 256 px) -> { width, height, data } */
 async function readImageFile(file) {
@@ -1367,22 +1369,31 @@ async function readImageFile(file) {
   return { width: id.width, height: id.height, data: id.data, url: c.toDataURL() };
 }
 
-/** Plan aus Text + Bild (Bildfarben, wenn kein Stil genannt) */
+/** Plan aus Text + Bild (Bildfarben, wenn kein Stil genannt) + im Fenster geaenderte Ziele */
 function kiPlan(text) {
   const plan = parsePrompt(text, new Set(S.textures), S.doc?.path || null);
-  if (kiImage && (!plan.style || S.kiMode === 'pixel')) {
+  if (kiImage && (!plan.style || S.kiMode === 'pixel' || plan.style.keepColors)) {
     plan.style = styleFromPalette(kiImage.palette, 'Farben aus „' + kiImage.name + '“');
     plan.understood.unshift(plan.style.name);
   }
+  const avail = new Set(S.textures);
+  plan.targets = [...plan.targets.filter((p) => !kiEdit.removed.has(p)), ...kiEdit.added.filter((p) => avail.has(p) && !plan.targets.includes(p))];
+  if (kiEdit.removed.size || kiEdit.added.length) plan.targetName = plan.targets.length === 1 ? pretty(plan.targets[0]) : `${plan.targets.length} Texturen`;
   return plan;
 }
 
+const ANIM_DE = { burn: 'brennt (Flammen)', pulse: 'leuchtet (pulsiert)', sparkle: 'glitzert', shine: 'Glanz läuft durch', flow: 'fließt', wave: 'Welle', blink: 'blinkt', rainbow: 'Regenbogen', auto: 'passend zum Stil' };
 function kiPlanHtml(plan) {
-  if (!plan.style) return `<div class="ki-miss">🤔 Ich weiß noch nicht, wie es aussehen soll. Nenne eine Figur (Spider-Man, Creeper …), einen Stil (Feuer, Eis, Galaxie …), Farben – oder gib ein Bild dazu.</div>`;
+  if (!plan.style) return `<div class="ki-miss">🤔 Ich weiß noch nicht, wie es aussehen soll. Nenne eine Figur (Spider-Man, Creeper …), einen Stil (Feuer, Eis, Galaxie …), Farben, ein Motiv („mit Totenkopf“) – oder gib ein Bild dazu.</div>`;
   const st = plan.style, c = st.colors;
+  const chips = plan.targets.map((p) => `<span class="tchip" title="${esc(p)}">${esc(pretty(p))}<button data-untarget="${esc(p)}" title="Weg damit">✕</button></span>`).join('');
   const rows = [
-    `<div>🎨 <b>Stil:</b> ${esc(st.name)} ${swatches([c.main, c.second, c.line, c.light])}${st.pattern ? ` · Muster: ${esc(PATTERN_DE[st.pattern.kind] || st.pattern.kind)}` : ''}${st.emblem ? ' · Emblem' : ''}${st.face ? ' · Gesicht' : ''}</div>`,
-    plan.targets.length ? `<div>🎯 <b>Ziel:</b> ${esc(plan.targetName)} – ${plan.targets.length} ${plan.targets.length === 1 ? 'Textur' : 'Texturen'}</div>` : '<div class="ki-miss">🎯 Ich habe kein Ziel gefunden. Sag z. B. „Kupferrüstung“, „Schwert“, „Hotbar“ – oder öffne vorher eine Textur.</div>',
+    `<div>🎨 <b>Stil:</b> ${esc(st.name)} ${st.keepColors ? '' : swatches([c.main, c.second, c.line, c.light])}${st.pattern ? ` · Muster: ${esc(PATTERN_DE[st.pattern.kind] || st.pattern.kind)}` : ''}${st.emblem ? ' · Emblem' : ''}${st.face ? ' · Gesicht' : ''}</div>`,
+    plan.motif ? `<div>🖼️ <b>Motiv:</b> ${esc(plan.motif)}${plan.picture ? ' – als ganzes Pixelbild' : ''}</div>` : plan.picture ? '<div>🖼️ <b>Pixelbild</b> im Stil</div>' : '',
+    plan.animate ? `<div>🎬 <b>Animation:</b> ${esc(ANIM_DE[plan.animate] || plan.animate)}</div>` : '',
+    `<div class="tline">🎯 <b>Ziel${plan.targets.length === 1 ? '' : 'e'}:</b> ${chips || '<span class="ki-miss">keins – sag z. B. „Kupferrüstung“, „Schwert“, „XP-Kugeln“ oder öffne eine Textur</span>'}
+      <input id="kiAdd" list="kiAddList" placeholder="＋ Textur dazu …" size="14"><datalist id="kiAddList"></datalist></div>`,
+    plan.fixes?.length ? `<div class="ki-note">✏️ Verbessert: ${plan.fixes.map(esc).join(', ')}</div>` : '',
     ...plan.notes.map((n) => `<div class="ki-note">ℹ️ ${esc(n)}</div>`),
     plan.unknown.length ? `<div class="ki-note">❓ Nicht verstanden: ${plan.unknown.map(esc).join(', ')}</div>` : '',
   ];
@@ -1396,11 +1407,11 @@ async function kiDialog() {
   let ideaSeed = Date.now();
   const m = openModal(`
     <h2>🤖 Textur-KI <span class="muted small">läuft ohne Internet</span></h2>
-    <p>Schreib, was du willst. Die KI malt es in die richtigen Texturen und zeigt dir am Ende ein Bild – erst <b>💾 Speichern</b> schreibt es ins Profil.</p>
-    <textarea id="kiText" rows="2" maxlength="300" placeholder="z. B. Spider-Man-Rüstung als Kupferrüstung · blaues Feuerschwert · Galaxie-Hotbar">${esc(S.kiText || '')}</textarea>
+    <p>Schreib, was du willst. Die KI malt mehrere Entwürfe, bewertet sie und zeigt dir die besten drei – erst <b>💾 Speichern</b> schreibt es ins Profil.</p>
+    <textarea id="kiText" rows="2" maxlength="300" placeholder="z. B. Spider-Man-Rüstung als Kupferrüstung · brennendes Diamantschwert · XP-Kugeln im Galaxie-Stil · Pixelbild von einem Drachen">${esc(S.kiText || '')}</textarea>
     <div class="ki-ideas"><span>💡 Ideen:</span><span id="kiIdeas"></span><button class="iconbtn sm" id="kiMore" title="Andere Ideen">🔄</button></div>
     <div class="ki-image">
-      <label class="btn small" title="Ein Bild (z. B. von Spider-Man) – die KI nimmt die Farben und das Motiv">📷 Bild als Vorlage<input type="file" accept="image/*" id="kiFile" hidden></label>
+      <label class="btn small" title="Ein Bild (z. B. von Spider-Man) – die KI stellt das Motiv frei und nimmt Farben und Motiv">📷 Bild als Vorlage<input type="file" accept="image/*" id="kiFile" hidden></label>
       <span id="kiImgInfo" class="muted">oder Bild hier hineinziehen</span>
     </div>
     <div id="kiMode" class="seg wide" hidden>
@@ -1414,7 +1425,10 @@ async function kiDialog() {
   const update = () => {
     S.kiText = text.value;
     const plan = kiPlan(text.value);
+    const keep = m.querySelector('#kiAdd')?.value || '';
     m.querySelector('#kiPlan').innerHTML = kiPlanHtml(plan);
+    const add = m.querySelector('#kiAdd');
+    if (add) add.value = keep;
     m.querySelector('#kiTheme').textContent = S.theme === 'normal' ? `neu: „${plan.style?.name || 'KI-Thema'}“` : themeName();
     m.querySelector('#kiGo').disabled = !plan.style || !plan.targets.length;
     m.querySelector('#kiMode').hidden = !kiImage;
@@ -1425,20 +1439,31 @@ async function kiDialog() {
     if (!file || !file.type.startsWith('image/')) return;
     try {
       const img = await readImageFile(file);
-      kiImage = { img, palette: paletteFromImage(img), name: file.name.replace(/\.[a-z]+$/i, '').slice(0, 30) };
-      m.querySelector('#kiImgInfo').innerHTML = `<img class="ki-thumb" src="${img.url}" alt=""> ${swatches(kiImage.palette.slice(0, 6).map((p) => kiHex(p.color)))} <button class="iconbtn sm" id="kiNoImg" title="Bild entfernen">✕</button>`;
+      kiImage = { img, palette: paletteFromImage(img, 8), name: file.name.replace(/\.[a-z]+$/i, '').slice(0, 30) };
+      const pv = pixelate(img, 24, 24, kiImage.palette.map((p) => p.color), { outline: true });
+      const cv = document.createElement('canvas'); drawFrame(cv, pv.data, pv.w, pv.h, 36, 36);
+      m.querySelector('#kiImgInfo').innerHTML = `<img class="ki-thumb" src="${img.url}" alt="" title="dein Bild"> → <img class="ki-thumb px" src="${cv.toDataURL()}" alt="" title="so sieht die KI das Motiv"> ${swatches(kiImage.palette.slice(0, 6).map((p) => kiHex(p.color)))} <button class="iconbtn sm" id="kiNoImg" title="Bild entfernen">✕</button>`;
       S.kiMode ||= 'motif';
       update();
     } catch (e) { toast('Bild ging nicht: ' + e.message, 'bad'); }
   };
-  text.addEventListener('input', () => { clearTimeout(kiDialog.t); kiDialog.t = setTimeout(update, 120); });
+  text.addEventListener('input', () => { clearTimeout(kiDialog.t); kiDialog.t = setTimeout(() => { kiEdit.removed.clear(); update(); }, 150); });
   m.querySelector('#kiFile').addEventListener('change', (e) => setImage(e.target.files[0]));
   m.addEventListener('dragover', (e) => { e.preventDefault(); m.classList.add('drop'); });
   m.addEventListener('dragleave', () => m.classList.remove('drop'));
   m.addEventListener('drop', (e) => { e.preventDefault(); m.classList.remove('drop'); setImage(e.dataTransfer.files[0]); });
+  m.addEventListener('input', (e) => {
+    if (e.target.id !== 'kiAdd') return;
+    // Vorschlaege fuer "Textur dazu"
+    const q = e.target.value.trim().toLowerCase().replace(/ /g, '_');
+    m.querySelector('#kiAddList').innerHTML = q.length < 2 ? '' : S.textures.filter((p) => p.includes(q)).slice(0, 30).map((p) => `<option value="${esc(p)}">`).join('');
+    if (S.textures.includes(e.target.value.trim())) { kiEdit.added.push(e.target.value.trim()); kiEdit.removed.delete(e.target.value.trim()); e.target.value = ''; update(); }
+  });
   m.addEventListener('click', async (e) => {
     const idea = e.target.closest('[data-idea]');
-    if (idea) { text.value = idea.dataset.idea; update(); return; }
+    if (idea) { text.value = idea.dataset.idea; kiEdit.removed.clear(); kiEdit.added.length = 0; update(); return; }
+    const un = e.target.closest('[data-untarget]');
+    if (un) { const p = un.dataset.untarget; kiEdit.removed.add(p); kiEdit.added = kiEdit.added.filter((x) => x !== p); update(); return; }
     if (e.target.closest('#kiMore')) { showIdeas(); return; }
     if (e.target.closest('#kiNoImg')) { kiImage = null; m.querySelector('#kiImgInfo').textContent = 'oder Bild hier hineinziehen'; update(); return; }
     const mode = e.target.closest('[data-kimode]');
@@ -1448,7 +1473,8 @@ async function kiDialog() {
     // anderes Profil: dort gelten andere Texturen (Version)
     const id = e.target.value;
     closeModal();
-    if (await switchProfile(id, { bring: 'copy' })) kiDialog(); else kiDialog();
+    await switchProfile(id, { bring: 'copy' });
+    kiDialog();
   });
   m.querySelector('#kiGo').addEventListener('click', async () => {
     const plan = kiPlan(text.value);
@@ -1461,22 +1487,55 @@ async function kiDialog() {
   text.focus();
 }
 
-/** KI-Ergebnis malen, als Entwuerfe einsetzen und Ergebnis zeigen */
+/** Fortschrittsfenster: die KI zeigt, woran sie gerade arbeitet */
+function kiProgress(steps) {
+  const m = openModal(`<h2>🤖 Die KI arbeitet …</h2>
+    <ol class="ki-steps">${steps.map((s, i) => `<li data-step="${i}"><span class="st-ic">○</span> ${esc(s)}<small></small></li>`).join('')}</ol>
+    <div class="ki-bar"><i id="kiBar"></i></div>`);
+  m.parentElement.replaceWith(m.parentElement.cloneNode(true)); // nicht wegklickbar
+  const root = $('#modalRoot .modal');
+  let cur = -1;
+  return {
+    async step(i, detail = '', frac = null) {
+      if (i !== cur) {
+        root.querySelectorAll('[data-step]').forEach((li) => {
+          const k = Number(li.dataset.step);
+          li.classList.toggle('done', k < i); li.classList.toggle('now', k === i);
+          li.querySelector('.st-ic').textContent = k < i ? '✔' : k === i ? '◐' : '○';
+        });
+        cur = i;
+      }
+      const li = root.querySelector(`[data-step="${i}"] small`);
+      if (li) li.textContent = detail ? ' – ' + detail : '';
+      root.querySelector('#kiBar').style.width = Math.round(((i + (frac ?? 0.5)) / steps.length) * 100) + '%';
+      await sleep(260); // die KI nimmt sich Zeit - und man kann mitlesen
+    },
+  };
+}
+
+/** KI: mehrere Entwuerfe malen, bewerten, die besten drei zur Auswahl zeigen */
 async function kiRun(plan, seed) {
+  const steps = ['Wunsch verstehen', 'Farben, Muster und Motiv planen', 'Original-Texturen laden', 'Entwürfe malen', 'Entwürfe bewerten und verfeinern', 'Vorschau bauen'];
   try {
+    const p = kiProgress(steps);
+    await p.step(0, `${plan.understood.slice(0, 4).join(', ') || plan.style.name}`);
+    await p.step(1, `${plan.style.name}${plan.motif ? ' + Motiv ' + plan.motif : ''}${plan.animate ? ' + Animation' : ''}`);
     if (S.theme === 'normal') {
       // ohne Thema: eins nach dem Stil anlegen
       let name = plan.style.name.replace(/[^\p{L}\p{N} -]/gu, '').slice(0, 30) || 'KI-Thema', n = 1;
       while (S.themes.some((t) => t.name.toLowerCase() === name.toLowerCase())) name = `${plan.style.name.slice(0, 26)} ${++n}`;
       const r = await post('/api/theme', { name });
       S.themes = (await get('/api/info')).themes;
-      await switchTheme(r.theme.key);
+      S.theme = r.theme.key;
+      post('/api/settings', { lastTheme: S.theme }).catch(() => {});
+      renderThemeButton();
     }
-    toast('🤖 Die KI malt …', 'ok');
     const sources = new Map();
-    for (const p of plan.targets) {
-      const px = await get(`/api/pixels?theme=normal&path=${encodeURIComponent(p)}`);
-      sources.set(p, { w: px.w, h: px.h, data: b64ToBytes(px.data) });
+    let k = 0;
+    for (const t of plan.targets) {
+      await p.step(2, `${++k}/${plan.targets.length}: ${pretty(t)}`, k / plan.targets.length);
+      const px = await get(`/api/pixels?theme=normal&path=${encodeURIComponent(t)}`);
+      sources.set(t, { w: px.w, h: px.h, data: b64ToBytes(px.data) });
     }
     const handle = new Set();
     try {
@@ -1484,73 +1543,98 @@ async function kiRun(plan, seed) {
       const d = b64ToBytes(st.data);
       for (let i = 0; i < d.length; i += 4) if (d[i + 3]) handle.add(`${d[i]},${d[i + 1]},${d[i + 2]}`);
     } catch { /* ohne Stiel-Farben */ }
+    const pal = kiImage ? kiImage.palette.map((q) => q.color) : null;
     const image = kiImage ? {
       mode: S.kiMode || 'colors',
-      motif8: pixelate(kiImage.img, 8, 8, kiImage.palette.map((p) => p.color)),
-      motif16: pixelate(kiImage.img, 16, 16, kiImage.palette.map((p) => p.color)),
-      source: kiImage.img, paletteColors: paletteFromImage(kiImage.img, 12).map((p) => p.color), keepShape: true,
+      motif8: pixelate(kiImage.img, 8, 8, pal, { outline: false }),
+      motif16: pixelate(kiImage.img, 16, 16, pal, { outline: true }),
+      source: kiImage.img, paletteColors: paletteFromImage(kiImage.img, 12).map((q) => q.color), keepShape: true,
     } : null;
-    const results = kiRender(plan, sources, handle, { seed, image });
-    // als Entwuerfe einsetzen (mit Rueckgaengig), alten Zustand merken fuer "Verwerfen"
-    const before = [];
-    for (const r of results) {
-      let doc = S.drafts.get(r.path);
-      const wasDraft = !!doc;
-      if (!doc) doc = await loadDoc(r.path);
-      before.push({ path: r.path, wasDraft, snap: { w: doc.w, h: doc.h, data: doc.data.slice(), frameH: doc.frameH } });
-      doc.undo.push({ w: doc.w, h: doc.h, data: doc.data.slice(), frameH: doc.frameH, anim: doc.anim });
-      doc.redo.length = 0;
-      const fh = sources.get(r.path) && r.h > r.w && r.h % r.w === 0 ? r.w : null;
-      Object.assign(doc, { w: r.w, h: r.h, data: new Uint8ClampedArray(r.data), dirty: true, frameH: fh || doc.frameH });
-      S.drafts.set(r.path, doc);
-      refreshTile(r.path);
+    const list = await kiDrafts(plan, sources, handle, { seed, image }, 6, (txt, frac) => p.step(3, txt, frac));
+    await p.step(4, `bester Entwurf: ${Math.round(list[0].score * 100)} von 100 Punkten`);
+    let skin = null;
+    if (plan.targets.some((t) => /humanoid|_layer_/.test(t))) {
+      for (const sp of ['entity/player/wide/steve.png', 'entity/steve.png']) {
+        try { const px = await get(`/api/pixels?theme=normal&path=${encodeURIComponent(sp)}`); skin = { w: px.w, h: px.h, data: b64ToBytes(px.data) }; break; } catch { /* naechste */ }
+      }
     }
-    S.cat = 'drafts';
-    renderCats(); renderGrid();
-    const first = results.find((r) => /humanoid\//.test(r.path) || /_layer_1/.test(r.path)) || results[0];
-    if (first) await openTexture(first.path);
-    renderDocBar();
-    await kiResult(plan, results, before, seed);
-  } catch (e) { toast('Die KI ist gestolpert: ' + e.message, 'bad'); }
+    await p.step(5, 'fast fertig');
+    closeModal();
+    kiChoose(plan, list.slice(0, 3), skin, seed);
+  } catch (e) { closeModal(); toast('Die KI ist gestolpert: ' + e.message, 'bad'); }
 }
 
-async function kiResult(plan, results, before, seed) {
-  // Bild: Spieler mit Ruestung (vorne/hinten) + alle Texturen
-  const L1 = results.find((r) => /equipment\/humanoid\//.test(r.path) || /_layer_1\.png$/.test(r.path));
-  const L2 = results.find((r) => /humanoid_leggings\//.test(r.path) || /_layer_2\.png$/.test(r.path));
-  let skin = null;
-  if (L1 || L2) {
-    for (const p of ['entity/player/wide/steve.png', 'entity/steve.png']) {
-      try { const px = await get(`/api/pixels?theme=normal&path=${encodeURIComponent(p)}`); skin = { w: px.w, h: px.h, data: b64ToBytes(px.data) }; break; } catch { /* naechste */ }
-    }
-  }
+/** Die besten Entwuerfe zeigen (animierte laufen live) und den gewaehlten uebernehmen */
+function kiChoose(plan, best, skin, seed) {
+  const nStars = (s) => Math.max(1, Math.min(5, Math.round(2 + s * 4)));
+  const stars = (s) => '★'.repeat(nStars(s)) + '☆'.repeat(5 - nStars(s));
   const m = openModal(`
-    <h2>🤖 Fertig: ${esc(plan.style.name)}</h2>
-    <p>${results.length} ${results.length === 1 ? 'Textur' : 'Texturen'} für <b>${esc(plan.targetName)}</b> – noch nicht gespeichert. Gefällt's? Dann einfach <b>💾 Speichern</b>. Du kannst auch alles noch nachmalen.</p>
-    <div class="ki-result">
-      ${L1 || L2 ? '<figure class="ki-player"><canvas id="kiPlayer"></canvas><figcaption>vorne · hinten</figcaption></figure>' : ''}
-      <div class="ki-grid">${results.map((r, i) => `<figure><canvas data-kires="${i}"></canvas><figcaption>${esc(pretty(r.path))}</figcaption></figure>`).join('')}</div>
-    </div>
-    <div class="actions"><button class="btn ghost" id="kiDrop">↩️ Verwerfen</button><button class="btn" id="kiAgain">🎲 Andere Variante</button><button class="btn primary" data-close>👍 Behalten</button></div>`);
-  if (L1 || L2) {
-    const pv = playerPreview(skin || { w: 64, h: 64, data: new Uint8ClampedArray(64 * 64 * 4) }, L1 && { w: L1.w, h: L1.h, data: L1.data }, L2 && { w: L2.w, h: L2.h, data: L2.data });
-    drawFrame(m.querySelector('#kiPlayer'), pv.data, pv.w, pv.h, 252, 224);
-  }
-  m.querySelectorAll('canvas[data-kires]').forEach((c) => { const r = results[Number(c.dataset.kires)]; const fh = r.h > r.w && r.h % r.w === 0 ? r.w : r.h; drawFrame(c, r.data.slice(0, r.w * fh * 4), r.w, fh, 96, 64); });
-  const undoAll = () => {
-    for (const b of before) {
-      const doc = S.drafts.get(b.path);
-      if (!doc) continue;
-      Object.assign(doc, b.snap);
-      doc.undo.pop();
-      if (!b.wasDraft) { doc.dirty = false; S.drafts.delete(b.path); }
-      refreshTile(b.path);
+    <h2>🤖 ${esc(plan.style.name)} – such dir einen Entwurf aus</h2>
+    <p>${plan.targets.length} ${plan.targets.length === 1 ? 'Textur' : 'Texturen'} für <b>${esc(plan.targetName)}</b>. Die KI hat 6 Entwürfe gemalt und die besten drei behalten.</p>
+    <div class="ki-choices">${best.map((d, i) => `
+      <div class="ki-choice ${i === 0 ? 'top' : ''}">
+        <div class="ki-choice-head"><b>Entwurf ${i + 1}</b>${i === 0 ? ' <span class="badge green">Empfehlung</span>' : ''}<span class="stars" title="${Math.round(d.score * 100)} Punkte">${stars(d.score)}</span></div>
+        <div class="ki-choice-pics" data-c="${i}"></div>
+        <button class="btn ${i === 0 ? 'primary' : ''} small" data-take="${i}">✔ Diesen nehmen</button>
+      </div>`).join('')}</div>
+    <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn" id="kiNew">🎲 6 neue Entwürfe</button></div>`);
+  const anims = [];
+  best.forEach((d, i) => {
+    const box = m.querySelector(`[data-c="${i}"]`);
+    const L1 = d.results.find((r) => /equipment\/humanoid\//.test(r.path) || /_layer_1\.png$/.test(r.path));
+    const L2 = d.results.find((r) => /humanoid_leggings\//.test(r.path) || /_layer_2\.png$/.test(r.path));
+    if (L1 || L2) {
+      const pv = playerPreview(skin || { w: 64, h: 64, data: new Uint8ClampedArray(64 * 64 * 4) }, L1 && { w: L1.w, h: L1.h, data: L1.data }, L2 && { w: L2.w, h: L2.h, data: L2.data });
+      const c = document.createElement('canvas'); c.className = 'ki-big';
+      drawFrame(c, pv.data, pv.w, pv.h, 180, 160); box.append(c);
     }
-    if (S.doc && before.some((b) => b.path === S.doc.path)) { editor.setDoc(S.doc, true); viewer.update(); }
-    renderCats(); renderGrid(); renderDocBar();
+    for (const r of d.results.filter((x) => !/equipment|_layer_/.test(x.path)).slice(0, L1 || L2 ? 4 : 6)) {
+      const c = document.createElement('canvas'); c.title = pretty(r.path);
+      const fh = r.frameH || (r.h > r.w && r.h % r.w === 0 ? r.w : r.h), n = Math.max(1, Math.floor(r.h / fh));
+      const big = !(L1 || L2) && d.results.length <= 2;
+      drawFrame(c, r.data.slice(0, r.w * fh * 4), r.w, fh, big ? 150 : 64, big ? 150 : 64);
+      box.append(c);
+      if (n > 1) anims.push({ c, r, fh, n, ft: r.anim?.frametime || 2, big });
+    }
+  });
+  // animierte Entwuerfe abspielen
+  const t0 = performance.now();
+  let raf = 0;
+  const loop = (now) => {
+    if (!m.isConnected) return;
+    for (const a of anims) { const k = Math.floor((now - t0) / (50 * a.ft)) % a.n; drawFrame(a.c, a.r.data.slice(k * a.r.w * a.fh * 4, (k + 1) * a.r.w * a.fh * 4), a.r.w, a.fh, a.big ? 150 : 64, a.big ? 150 : 64); }
+    raf = requestAnimationFrame(loop);
   };
-  m.querySelector('#kiDrop').addEventListener('click', () => { undoAll(); closeModal(); toast('↩️ KI-Ergebnis verworfen', 'ok'); });
-  m.querySelector('#kiAgain').addEventListener('click', async () => { undoAll(); closeModal(); await kiRun(plan, seed + 1); });
+  if (anims.length) raf = requestAnimationFrame(loop);
+  modalCancel = () => cancelAnimationFrame(raf);
+  m.querySelector('#kiNew').addEventListener('click', () => { cancelAnimationFrame(raf); modalCancel = null; closeModal(); kiRun(plan, seed + 6); });
+  m.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-take]');
+    if (!b) return;
+    cancelAnimationFrame(raf); modalCancel = null; closeModal();
+    await kiApply(plan, best[Number(b.dataset.take)].results);
+  });
+}
+
+/** Ergebnis als Entwuerfe einsetzen (mit Rueckgaengig je Textur) */
+async function kiApply(plan, results) {
+  for (const r of results) {
+    let doc = S.drafts.get(r.path);
+    if (!doc) doc = await loadDoc(r.path);
+    doc.undo.push({ w: doc.w, h: doc.h, data: doc.data.slice(), frameH: doc.frameH, anim: doc.anim ? structuredClone(doc.anim) : doc.anim });
+    doc.redo.length = 0;
+    if (r.frameH) Object.assign(doc, { frameH: r.frameH, anim: r.anim, animDirty: true }); // neue Animation
+    Object.assign(doc, { w: r.w, h: r.h, data: new Uint8ClampedArray(r.data), dirty: true });
+    S.drafts.set(r.path, doc);
+    refreshTile(r.path);
+  }
+  S.cat = 'drafts';
+  renderCats(); renderGrid();
+  const first = results.find((r) => /humanoid\//.test(r.path) || /_layer_1/.test(r.path)) || results[0];
+  if (first) await openTexture(first.path);
+  if (results.some((r) => r.frameH)) { S.animOpen = true; renderAnimBar(); }
+  renderDocBar();
+  toast(`🤖 ${results.length} ${results.length === 1 ? 'Textur' : 'Texturen'} übernommen – noch nicht gespeichert. Gefällt's? <b>💾 Speichern</b>. Nicht? ${KEY}+Z je Textur.`, 'ok');
 }
 
 // ---------- Online-Konto ----------

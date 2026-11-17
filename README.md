@@ -52,12 +52,20 @@ Node.js ist jeweils schon dabei – nichts installieren.
 
 ## Textur-KI 🤖
 
-Oben auf **🤖 KI**, dann beschreiben, was du willst – die KI versteht Figuren (Spider-Man, Batman, Iron Man, Creeper,
-Pikachu, Ninja …), Stile (Feuer, Eis, Lava, Galaxie, Neon, Regenbogen, Tarnung …), Farben, Muster (Streifen, Sterne,
-Netz …) und Ziele (z. B. „als Kupferrüstung“, Schwert, Werkzeuge, Hotbar, Herzen, XP-Leiste, Blöcke). Sie läuft komplett
-auf deinem PC: Form und Schattierung kommen aus der Original-Textur, Farben, Muster, Gesichter und Embleme aus dem Stil.
-Mit einem **Bild als Vorlage** nimmt sie dessen Farben, druckt das Motiv auf oder macht ein ganzes Pixelbild daraus.
-Am Ende siehst du den Spieler mit der Rüstung von vorne und hinten – „Andere Variante“, „Verwerfen“ oder behalten.
+Oben auf **🤖 KI**, dann beschreiben, was du willst. Die KI läuft komplett auf deinem PC (kein Internet, keine Kosten):
+
+- **Versteht** Figuren (Spider-Man, Batman, Iron Man, Creeper, Pikachu, Ninja … rund 55), Stile (Feuer, Eis, Lava,
+  Galaxie, Neon, Regenbogen, Tarnung …), Farben, Muster, Zusätze („hell“, „dunkel“, „rostig“, „glänzend“) und viele Ziele:
+  Rüstungen, Werkzeuge, **XP-Kugeln**, Tränke, Totem, Elytra, Hotbar, Herzen, XP-Leiste, Bossleiste, Blöcke, Mobs …
+  Tippfehler, Mehrzahl und zusammengesetzte Wörter („Diamantschwerter“) klappen auch. Die erkannten Ziele erscheinen als
+  Kärtchen – wegklicken oder weitere hinzufügen.
+- **Motive aus Worten**: „Schwert mit Totenkopf“, „Kupferrüstung mit Blitz“ – 30 eingebaute Pixel-Motive (Herz, Krone,
+  Drache, Mond, Flamme, Pilz …). „**Pixelbild von einem Drachen**“ malt ein ganzes Bild mit Himmel und Boden.
+- **Animationen**: „brennendes Schwert“ lodert im Inventar, „leuchtende XP-Kugeln“, „glitzernde Spitzhacke“ …
+- **Bild als Vorlage**: Hintergrund wird freigestellt, das Motiv zugeschnitten und als Farben, Aufdruck oder ganzes
+  Pixelbild verwendet.
+- **Lässt sich Zeit**: Sie malt 6 Entwürfe, bewertet sie (Kontrast, Lesbarkeit, Sauberkeit) und zeigt dir die besten
+  drei – animierte laufen live, Rüstungen am Spieler von vorne und hinten.
 
 ## Der Befehl `/thema`
 
@@ -109,7 +117,7 @@ docs/              Online-Speicher einrichten
 ```
 
 - Start: `cd editor` → `node --no-warnings server.mjs --app` (Node.js ≥ 22.13; Windows, Mac, Linux)
-- Selbsttest: `node --no-warnings tools/selbsttest.mjs`, außerdem `tools/zip-test.mjs` und `tools/plattform-test.mjs` (Mac-Ordner simuliert)
+- Selbsttest: `node --no-warnings tools/selbsttest.mjs`, außerdem `tools/ki-test.mjs`, `tools/zip-test.mjs` und `tools/plattform-test.mjs` (Mac-Ordner simuliert)
 - Testserver gegen Kopien aller Profile + Supabase-Nachbau: `node --no-warnings tools/testserver.mjs --neu` (Port 47812)
 - Mods bauen: `node mod/tools/baue-alle.mjs` (braucht die jeweiligen Minecraft-Versionen lokal installiert);
   Tests: `mod/test.ps1`, `mod/test-alle.ps1`

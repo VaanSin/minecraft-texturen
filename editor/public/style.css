@@ -376,3 +376,27 @@ input[type=range] { accent-color: var(--violet); width: 100%; }
 .ki-grid figure, .ki-player figcaption { margin: 0; }
 .ki-grid figure { display: grid; justify-items: center; gap: 2px; padding: 6px; border-radius: 10px; border: 1px solid var(--line); background: repeating-conic-gradient(#2a2546 0% 25%, #221d3b 0% 50%) 0 0 / 10px 10px; }
 .ki-grid figcaption, .ki-player figcaption { font-size: 11px; color: var(--muted); max-width: 110px; text-align: center; }
+
+/* Textur-KI 2 */
+.tline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.tchip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); background: rgba(255,255,255,.07); border-radius: 999px; padding: 1px 4px 1px 9px; font-size: 12px; }
+.tchip button { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 3px; }
+.tchip button:hover { color: #ff8a8a; }
+#kiAdd { background: rgba(0,0,0,.25); border: 1px dashed var(--line); color: var(--text); border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 12px; }
+.ki-thumb.px { image-rendering: pixelated; }
+.ki-steps { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 6px; font-size: 14px; }
+.ki-steps li { color: var(--muted); }
+.ki-steps li.now { color: var(--text); font-weight: 700; }
+.ki-steps li.done { color: #8BE36B; }
+.ki-steps small { font-weight: 500; color: var(--muted); }
+.st-ic { display: inline-block; width: 18px; }
+.ki-bar { height: 8px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+.ki-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--pink), var(--violet), #3cc8ff); transition: width .25s; }
+.ki-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 10px 0; }
+.ki-choice { display: grid; gap: 8px; padding: 10px; border-radius: 14px; border: 2px solid var(--line); background: rgba(0,0,0,.2); }
+.ki-choice.top { border-color: rgba(92,255,122,.6); }
+.ki-choice-head { display: flex; align-items: center; gap: 6px; }
+.ki-choice-head .stars { margin-left: auto; color: #ffe14d; letter-spacing: 1px; font-size: 13px; }
+.ki-choice-pics { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; min-height: 80px; padding: 6px; border-radius: 10px;
+  background: repeating-conic-gradient(#2a2546 0% 25%, #221d3b 0% 50%) 0 0 / 12px 12px; }
+.ki-choice-pics canvas { image-rendering: pixelated; }

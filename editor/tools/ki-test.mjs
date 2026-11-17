@@ -1,5 +1,5 @@
 // Prueft die Textur-KI ohne Browser: Verstehen von Beispielsaetzen + Malen.  node --no-warnings tools/ki-test.mjs
-import { parsePrompt, render, playerPreview, paletteFromImage, pixelate } from '../public/ki.js';
+import { parsePrompt, render, playerPreview, paletteFromImage, pixelate, drafts, foreground } from '../public/ki.js';
 import { ZipReader } from '../lib/zip.mjs';
 import { decodePng } from '../lib/png.mjs';
 import { defaultRoots, scanProfiles, findJar } from '../lib/launchers.mjs';
@@ -31,6 +31,39 @@ for (const [text, styleName, check] of cases) {
   const res = render(p, src, new Set(), { seed: 1 });
   const changed = res.every((r) => { const o = src.get(r.path).data; return r.data.length === o.length && r.data.some((v, i) => v !== o[i]); });
   ok('   gemalt und verändert', res.length === p.targets.length && changed);
+}
+// Neue Faehigkeiten: XP-Kugeln, Brennen (Animation), Motive, Pixelbild, Tippfehler, Entwuerfe
+{
+  const xp = parsePrompt('XP Kugeln im Galaxie Stil', avail, null);
+  ok('XP-Kugeln erkannt', xp.targets.some((p) => /experience_orb/.test(p)) && xp.style?.name === 'Galaxie');
+  const burn = parsePrompt('brennendes Diamantschwerd', avail, null);
+  ok('Tippfehler im Wortteil + Brennen', burn.animate === 'burn' && burn.targets[0] === 'item/diamond_sword.png' && burn.fixes.length === 1, burn.fixes.join(','));
+  const rb = render(burn, new Map([[burn.targets[0], img(burn.targets[0])]]), new Set(), { seed: 1 })[0];
+  ok('Brennendes Schwert: 12 Bilder + Takt', rb.h === 16 * 12 && rb.frameH === 16 && rb.anim?.frametime === 2);
+  // Flammen erscheinen ausserhalb des Schwerts (vorher durchsichtige Pixel)
+  const o = img('item/diamond_sword.png').data;
+  let flames = 0; for (let i = 0; i < o.length; i += 4) if (!o[i + 3] && rb.data[i + 3]) flames++;
+  ok('Flammen um das Schwert herum', flames > 3, `${flames} Pixel`);
+  const mot = parsePrompt('Diamantschwerter mit Totenkopf', avail, null);
+  ok('Motiv „mit Totenkopf“ erkannt', mot.motif === 'totenkopf' && mot.targets[0] === 'item/diamond_sword.png');
+  const pic = parsePrompt('Pixelbild von einem Drachen', avail, null);
+  const rp = render(pic, new Map(pic.targets.map((x) => [x, img(x)])), new Set(), { seed: 1 })[0];
+  ok('Pixelbild: Gemälde voll bemalt', pic.picture && pic.motif === 'drache' && rp.data.every((v, i) => i % 4 !== 3 || v === 255));
+  const ds = await drafts(parsePrompt('Spiderman Rüstung als Kupferrüstung', avail, null), new Map(parsePrompt('Spiderman Rüstung als Kupferrüstung', avail, null).targets.map((x) => [x, img(x)])), new Set(), { seed: 1 }, 6);
+  ok('6 Entwürfe, nach Punkten sortiert', ds.length === 6 && ds.every((d, i) => i === 0 || ds[i - 1].score >= d.score), ds.map((d) => Math.round(d.score * 100)).join(','));
+}
+// Bild mit Hintergrund freistellen: weisser Rand weg, Motiv zugeschnitten
+{
+  const W = 60, pic = { width: W, height: W, data: new Uint8ClampedArray(W * W * 4) };
+  for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) pic.data.set(x >= 20 && x < 40 && y >= 15 && y < 45 ? (y < 30 ? [210, 30, 40, 255] : [30, 60, 150, 255]) : [250, 250, 250, 255], (y * W + x) * 4);
+  const fg = foreground(pic);
+  ok('Hintergrund erkannt', fg[0] === 0 && fg[30 * W + 30] === 1);
+  const pal = paletteFromImage(pic);
+  ok('Palette ohne Hintergrund-Weiß', pal.every((c) => !(c.color[0] > 240 && c.color[1] > 240)));
+  const px = pixelate(pic, 16, 16, pal.map((c) => c.color), { outline: true });
+  const cnt = (f) => { let n = 0; for (let i = 0; i < px.data.length; i += 4) if (f(i)) n++; return n; };
+  ok('Motiv füllt die Höhe (zugeschnitten)', px.data[(0 * 16 + 8) * 4 + 3] === 255 && px.data[(15 * 16 + 8) * 4 + 3] === 255);
+  ok('Kontur außen herum (dunkler als das Motiv)', cnt((i) => px.data[i + 3] && (0.299 * px.data[i] + 0.587 * px.data[i + 1] + 0.114 * px.data[i + 2]) < 50) > 0);
 }
 // Spieler-Vorschau und Bild-Werkzeuge
 const p = parsePrompt('Batman Rüstung', avail, null);
