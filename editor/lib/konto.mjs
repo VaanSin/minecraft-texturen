@@ -115,12 +115,19 @@ export class Konto {
 
   async login(username, password) {
     username = String(username || '').trim();
-    if (!NAME_RE.test(username)) throw new Error('Benutzername oder Passwort stimmt nicht.');
+    if (!NAME_RE.test(username)) throw new Error('Benutzernamen haben 3–20 Zeichen: nur Buchstaben, Zahlen und _ (keine Leerzeichen, keine Umlaute).');
     let d;
     try {
       d = await this.#call('POST', '/auth/v1/token?grant_type=password', { body: { email: this.#email(username), password } });
     } catch (e) {
-      if (e.status === 400 || e.status === 401) throw new Error('Benutzername oder Passwort stimmt nicht.');
+      if (e.status === 400 || e.status === 401) {
+        // Gibt es den Namen ueberhaupt? (Benutzernamen sind oeffentlich, z. B. bei geteilten Themen)
+        let exists = true;
+        try { const r = await this.#call('GET', `/rest/v1/profiles?select=id&username=ilike.${encodeURIComponent(username)}`); exists = Array.isArray(r) && r.length > 0; } catch { /* dann allgemein */ }
+        const err = new Error(exists ? 'Das Passwort stimmt nicht.' : `Den Benutzernamen „${username}“ gibt es noch nicht – du musst dich zuerst registrieren.`);
+        err.code = exists ? 'wrong_password' : 'unknown_user';
+        throw err;
+      }
       throw e;
     }
     // Schreibweise des Namens aus dem Profil uebernehmen

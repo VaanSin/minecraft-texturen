@@ -1,5 +1,6 @@
 # Baupakete
 release/
+.cache/
 mod/build/
 node_modules/
 

@@ -9,17 +9,29 @@ import { createRequire } from 'node:module';
 
 export const LAUNCHER_NAMES = { curseforge: 'CurseForge', modrinth: 'Modrinth', lunar: 'Lunar Client', minecraft: 'Minecraft Launcher' };
 
-/** Wo die Launcher ihre Daten haben. Umgebungsvariablen nur fuer Tests mit Kopien. */
-export function defaultRoots(dataDir, env = process.env) {
-  const home = os.homedir();
-  const appdata = env.APPDATA || path.join(home, 'AppData', 'Roaming');
-  const cf = env.MCT_INSTANCES || path.join(home, 'curseforge', 'minecraft', 'Instances');
+/**
+ * Wo die Launcher ihre Daten haben (Windows, Mac, Linux). Umgebungsvariablen nur fuer Tests mit Kopien.
+ *   CurseForge  Win: %USERPROFILE%\curseforge\minecraft   Mac/Linux: ~/Documents/curseforge/minecraft
+ *   Modrinth    Win: %APPDATA%\ModrinthApp   Mac: ~/Library/Application Support/ModrinthApp   Linux: ~/.local/share/ModrinthApp
+ *               (aeltere Versionen: com.modrinth.theseus)
+ *   Lunar       ueberall ~/.lunarclient
+ *   Minecraft   Win: %APPDATA%\.minecraft   Mac: ~/Library/Application Support/minecraft   Linux: ~/.minecraft
+ */
+export function defaultRoots(dataDir, env = process.env, platform = env.MCT_PLATFORM || process.platform, home = os.homedir()) {
+  const j = platform === 'win32' ? path.win32.join : path.posix.join;
+  const appdata = env.APPDATA || j(home, 'AppData', 'Roaming');
+  const support = platform === 'win32' ? appdata : platform === 'darwin' ? j(home, 'Library', 'Application Support') : (env.XDG_DATA_HOME || j(home, '.local', 'share'));
+  const firstExisting = (...c) => c.find((d) => fs.existsSync(d)) || c[0];
+  const cfDefault = platform === 'win32'
+    ? j(home, 'curseforge', 'minecraft', 'Instances')
+    : firstExisting(j(home, 'Documents', 'curseforge', 'minecraft', 'Instances'), j(home, 'curseforge', 'minecraft', 'Instances'));
+  const cf = env.MCT_INSTANCES || cfDefault;
   return {
     curseforge: cf,
-    curseforgeInstall: env.MCT_INSTALL || path.join(path.dirname(cf), 'Install'),
-    modrinth: env.MCT_MODRINTH || path.join(appdata, 'ModrinthApp'),
-    lunar: env.MCT_LUNAR || path.join(home, '.lunarclient'),
-    minecraft: env.MCT_MINECRAFT || path.join(appdata, '.minecraft'),
+    curseforgeInstall: env.MCT_INSTALL || j(cf, '..', 'Install'),
+    modrinth: env.MCT_MODRINTH || firstExisting(j(support, 'ModrinthApp'), j(support, 'com.modrinth.theseus')),
+    lunar: env.MCT_LUNAR || j(home, '.lunarclient'),
+    minecraft: env.MCT_MINECRAFT || (platform === 'win32' ? j(appdata, '.minecraft') : platform === 'darwin' ? j(support, 'minecraft') : j(home, '.minecraft')),
     // weitere Ordner mit versions\<v>\<v>.jar (nur lesen) - fuer Tests
     jarDirs: (env.MCT_JARS || '').split(path.delimiter).filter(Boolean),
     downloads: path.join(dataDir, 'versions'),

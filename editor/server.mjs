@@ -5,7 +5,6 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Store, textureInJar, EXTRA } from './lib/store.mjs';
 import { decodePng, encodePng } from './lib/png.mjs';
@@ -13,6 +12,7 @@ import { listProfiles, infoForDir, ensureMod, isRunning, activateInOptions, acti
 import { defaultRoots, scanProfiles, profileByDir, findJar, downloadJar } from './lib/launchers.mjs';
 import { Konto } from './lib/konto.mjs';
 import { writeZip } from './lib/zip.mjs';
+import { dataDir, openFolder, startWindow, IS_WIN } from './lib/system.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, 'public');
@@ -21,7 +21,7 @@ const APP_MODE = process.argv.includes('--app');
 const HOME = os.homedir();
 // MCT_DATA / MCT_INSTANCE / MCT_INSTANCES / MCT_INSTALL / MCT_MODRINTH / MCT_LUNAR / MCT_MINECRAFT / MCT_JARS / MCT_DESKTOP:
 // nur fuer Tests mit Kopien statt der echten Profile
-const DATA_DIR = process.env.MCT_DATA || path.join(process.env.APPDATA || path.join(HOME, 'AppData', 'Roaming'), 'MinecraftTexturen');
+const DATA_DIR = dataDir();
 
 // ---------- Einstellungen ----------
 const DEFAULTS = {
@@ -304,7 +304,7 @@ async function handle(req, res) {
     }
     if (p === '/api/open-folder') {
       const t = store.theme(b.theme);
-      execFile('explorer.exe', [t ? t.dir : store.packsDir]);
+      openFolder(t ? t.dir : store.packsDir);
       return json(res, { ok: true });
     }
   }
@@ -319,20 +319,12 @@ const server = http.createServer((req, res) => {
 });
 
 // ---------- Programmfenster ----------
-function edgePath() {
-  const cands = [
-    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-  ];
-  return cands.find((c) => fs.existsSync(c));
-}
-
+// Windows: Edge/Chrome als eigenes Fenster; Mac/Linux: Chrome/Edge/Brave als App-Fenster, sonst der Standardbrowser.
 function openWindow(exitWhenClosed) {
-  const edge = edgePath();
   const url = `http://127.0.0.1:${PORT}/`;
-  if (!edge) { execFile('cmd.exe', ['/c', 'start', '', url]); return; }
-  const profile = path.join(process.env.LOCALAPPDATA || DATA_DIR, 'MinecraftTexturen', 'fenster');
-  const child = spawn(edge, [`--app=${url}`, `--user-data-dir=${profile}`, '--window-size=1560,960', '--no-first-run', '--no-default-browser-check', '--disable-features=Translate'], { detached: !exitWhenClosed, stdio: 'ignore' });
+  const profile = IS_WIN ? path.join(process.env.LOCALAPPDATA || DATA_DIR, 'MinecraftTexturen', 'fenster') : path.join(DATA_DIR, 'fenster');
+  const child = startWindow(url, profile, !exitWhenClosed);
+  if (!child) return;
   if (!exitWhenClosed) { child.unref(); return; }
   child.on('exit', () => {
     // Fenster zu: kurz warten (Neuladen), dann beenden, wenn sich niemand mehr meldet.
@@ -350,7 +342,12 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`Bereit: http://127.0.0.1:${PORT}/`);
   if (APP_MODE) {
     openWindow(true);
-    // Sicherheitsnetz: wenn sich 15 Minuten lang kein Fenster meldet, beenden.
-    setInterval(() => { if (Date.now() - lastPing > 15 * 60 * 1000) process.exit(0); }, 60 * 1000);
+    // Beenden, wenn sich kein Fenster mehr meldet: 5 Minuten (Hintergrund-Tabs melden sich seltener;
+    // auf dem Mac bleibt der Browser nach dem Schliessen des Fensters oft offen) - vor der ersten Meldung 15 Minuten.
+    const started = Date.now();
+    setInterval(() => {
+      const idle = Date.now() - lastPing;
+      if (idle > 15 * 60 * 1000 || (lastPing > started && idle > 5 * 60 * 1000)) process.exit(0);
+    }, 30 * 1000);
   }
 });

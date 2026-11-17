@@ -89,14 +89,14 @@ export class ZipReader {
   }
 }
 
-/** Zip aus [{ name, data }] bauen (deflate). */
+/** Zip aus [{ name, data, mode? }] bauen (deflate). mode = Unix-Rechte, z. B. 0o755 fuer ausfuehrbare Dateien (Mac/Linux). */
 export function writeZip(entries) {
   const parts = [], central = [];
   let offset = 0;
   const now = new Date();
   const time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
   const date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
-  for (const { name, data } of entries) {
+  for (const { name, data, mode } of entries) {
     const raw = Buffer.from(data);
     const comp = zlib.deflateRawSync(raw, { level: 9 });
     const useComp = comp.length < raw.length;
@@ -109,9 +109,12 @@ export function writeZip(entries) {
     lh.writeUInt32LE(body.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(nameBuf.length, 26); lh.writeUInt16LE(0, 28);
     parts.push(lh, nameBuf, body);
     const ch = Buffer.alloc(46);
-    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(useComp ? 8 : 0, 10);
+    // Version 4: "erstellt unter Unix" (3), damit Mac/Linux die Rechte uebernehmen
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(mode ? (3 << 8) | 20 : 20, 4);
+    ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(useComp ? 8 : 0, 10);
     ch.writeUInt16LE(time, 12); ch.writeUInt16LE(date, 14); ch.writeUInt32LE(crc, 16);
     ch.writeUInt32LE(body.length, 20); ch.writeUInt32LE(raw.length, 24); ch.writeUInt16LE(nameBuf.length, 28);
+    if (mode) ch.writeUInt32LE(((0o100000 | mode) << 16) >>> 0, 38); // reguläre Datei + Rechte
     ch.writeUInt32LE(offset, 42);
     central.push(ch, nameBuf);
     offset += 30 + nameBuf.length + body.length;

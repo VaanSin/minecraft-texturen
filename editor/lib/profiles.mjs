@@ -3,8 +3,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { scanProfiles, profileByDir, findJar } from './launchers.mjs';
+import { javaCommandLines } from './system.mjs';
 
 /** Themen-Ordner: neu "Thema-<Name>", die ersten hiessen "Border-<Name>" */
 export const THEME_PREFIXES = ['Thema-', 'Border-'];
@@ -90,11 +90,8 @@ export function ensureMod(dir, modDirs, roots) {
 
 /** Laeuft gerade ein Minecraft mit diesem Profil-Ordner? */
 export function isRunning(dir) {
-  try {
-    const out = execFileSync('powershell', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='javaw.exe' or Name='java.exe'\" | ForEach-Object CommandLine"], { encoding: 'utf8', timeout: 8000 });
-    const needle = path.resolve(dir).toLowerCase();
-    return out.toLowerCase().split(/\r?\n/).some((l) => l.includes(needle));
-  } catch { return false; }
+  const needle = path.resolve(dir).toLowerCase();
+  return javaCommandLines().some((l) => l.toLowerCase().includes(needle));
 }
 
 /**

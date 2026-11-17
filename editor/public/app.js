@@ -6,6 +6,8 @@ import { computeWarnings, describeAlpha } from './warnings.js';
 import { Viewer3D } from './viewer3d.js';
 
 const $ = (s) => document.querySelector(s);
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const KEY = IS_MAC ? '⌘' : 'Strg'; // Anzeige fuer Tastenkuerzel
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ---------- Zustand ----------
@@ -102,6 +104,7 @@ async function init() {
   loadRecent();
   setColor(S.color, false);
   bindUi();
+  if (IS_MAC) document.querySelectorAll('[title*="Strg"]').forEach((el) => { el.title = el.title.replace(/Strg/g, '⌘'); });
   renderProfileButton();
   renderThemeButton();
   refreshKonto();
@@ -308,7 +311,7 @@ function renderDocBar() {
   $('#saveBtn').disabled = !n || ro || saving;
   $('#saveBtn').classList.toggle('dirty', n > 0);
   if (!saving) $('#saveBtn').textContent = n > 1 ? `💾 Alles speichern (${n})` : '💾 Speichern';
-  $('#saveBtn').title = n ? `${n} ${n === 1 ? 'Textur' : 'Texturen'} noch nicht gespeichert (Strg+S)` : 'Alles gespeichert';
+  $('#saveBtn').title = n ? `${n} ${n === 1 ? 'Textur' : 'Texturen'} noch nicht gespeichert (${KEY}+S)` : 'Alles gespeichert';
   $('#undoBtn').disabled = !d?.undo.length;
   $('#redoBtn').disabled = !d?.redo.length;
   $('#growBtn').disabled = !d || ro;
@@ -649,7 +652,7 @@ function renderToolOpts() {
   if (t === 'rect' || t === 'ellipse') parts.push(`<div class="opt-title">Form</div>${seg('filled', [[false, 'Rand'], [true, 'Voll']])}`);
   if (t === 'gradient') parts.push(`<div class="opt-title">Verlauf bis</div>${seg('gradEnd', [['dark', 'Dunkel'], ['light', 'Hell'], ['clear', 'Weg']])}<div class="opt-hint">Auf eine Fläche ziehen</div>`);
   if (t === 'outline') parts.push(`<div class="opt-title">Randfarbe</div>${seg('outlineAuto', [[true, 'Auto'], [false, 'Meine']])}<div class="opt-hint">Klick ins Leere: Rand um alles</div>`);
-  if (t === 'select') parts.push(`<div class="opt-hint">Ziehen = auswählen<br>Reinklicken = verschieben<br>Entf = löschen<br>Strg+C / Strg+V</div>`);
+  if (t === 'select') parts.push(`<div class="opt-hint">Ziehen = auswählen<br>Reinklicken = verschieben<br>Entf = löschen<br>${KEY}+C / ${KEY}+V</div>`);
   if (MIRROR_TOOLS.has(t)) parts.push(`<div class="opt-title">Spiegeln</div><div class="seg"><button data-mirror="mirrorX" class="${o.mirrorX ? 'on' : ''}" title="Links und rechts gleich malen">↔</button><button data-mirror="mirrorY" class="${o.mirrorY ? 'on' : ''}" title="Oben und unten gleich malen">↕</button></div>`);
   $('#toolOpts').innerHTML = parts.join('');
 }
@@ -1091,7 +1094,10 @@ async function refreshKonto() {
 }
 
 /** Anmelden / Registrieren / Konto. Gibt true zurueck, wenn danach jemand angemeldet ist. */
-async function kontoDialog(mode = 'anmelden', why = '') {
+const kontoUsedHere = () => { try { return !!localStorage.getItem('mct-konto-genutzt'); } catch { return false; } };
+/** mode: 'anmelden' | 'registrieren' | null (= wer sich hier noch nie angemeldet hat, sieht zuerst "Neu registrieren") */
+async function kontoDialog(mode = null, why = '', prefill = {}) {
+  mode ||= kontoUsedHere() ? 'anmelden' : 'registrieren';
   const k = await refreshKonto();
   if (!k.configured) {
     openModal(`<h2>👤 Online-Konto</h2><p>Online-Konten sind in dieser Version noch nicht eingerichtet.</p><div class="actions"><button class="btn primary" data-close>OK</button></div>`);
@@ -1133,8 +1139,14 @@ async function kontoDialog(mode = 'anmelden', why = '') {
       <div class="kerr" id="kErr"></div>
       <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="kGo">${reg ? '✨ Konto erstellen' : '➡️ Anmelden'}</button></div>`);
     modalResolve = resolve;
-    m.querySelector('#kUser').focus();
-    m.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => { modalResolve = null; closeModal(); kontoDialog(b.dataset.mode, why).then(resolve); }));
+    m.querySelector('#kUser').value = prefill.username || '';
+    m.querySelector('#kPw').value = prefill.password || '';
+    (prefill.username ? m.querySelector(reg && prefill.password ? '#kPw2' : '#kPw') : m.querySelector('#kUser')).focus();
+    const switchTo = (to) => {
+      const keep = { username: m.querySelector('#kUser').value.trim(), password: m.querySelector('#kPw').value };
+      modalResolve = null; closeModal(); kontoDialog(to, why, keep).then(resolve);
+    };
+    m.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => switchTo(b.dataset.mode)));
     const go = async () => {
       const username = m.querySelector('#kUser').value.trim(), password = m.querySelector('#kPw').value;
       const err = m.querySelector('#kErr');
@@ -1145,9 +1157,21 @@ async function kontoDialog(mode = 'anmelden', why = '') {
         await post(reg ? '/api/konto/registrieren' : '/api/konto/anmelden', { username, password });
         await refreshKonto();
         modalResolve = null; closeModal();
+        try { localStorage.setItem('mct-konto-genutzt', '1'); } catch { /* egal */ }
         toast(reg ? `🎉 Willkommen, ${esc(S.konto.user.username)}! Dein Konto ist fertig.` : `👋 Hallo ${esc(S.konto.user.username)}!`, 'ok');
         resolve(true);
-      } catch (e) { err.textContent = e.message; btn.disabled = false; }
+      } catch (e) {
+        btn.disabled = false;
+        err.textContent = e.message;
+        if (e.code === 'unknown_user' && !reg) {
+          // Name gibt es noch nicht -> direkt zum Registrieren (Name und Passwort bleiben drin)
+          const b = document.createElement('button');
+          b.className = 'btn primary small'; b.style.marginTop = '6px';
+          b.textContent = `✨ Jetzt „${username}“ registrieren`;
+          b.addEventListener('click', () => switchTo('registrieren'));
+          err.append(document.createElement('br'), b);
+        }
+      }
     };
     m.querySelector('#kGo').addEventListener('click', go);
     m.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
@@ -1172,7 +1196,7 @@ async function passwordDialog() {
 async function needLogin(why) {
   const k = await refreshKonto();
   if (!k.configured) { toast('Online-Konten sind in dieser Version noch nicht eingerichtet.', 'bad'); return false; }
-  return k.user ? true : kontoDialog('anmelden', why);
+  return k.user ? true : kontoDialog(null, why);
 }
 
 async function uploadDialog() {
@@ -1500,17 +1524,18 @@ function bindUi() {
     }
     if (isTyping(e) || $('#modalRoot').innerHTML) return;
     const k = e.key.toLowerCase();
-    if (e.ctrlKey && k === 's') { e.preventDefault(); save(); return; }
+    const mod = e.ctrlKey || e.metaKey; // Strg (Windows) bzw. Cmd (Mac)
+    if (mod && k === 's') { e.preventDefault(); save(); return; }
     const editable = S.doc && S.theme !== 'normal';
     if (editable && (e.key === 'Delete' || e.key === 'Backspace')) { if (editor.deleteSelection()) e.preventDefault(); return; }
     if (editable && e.key === 'Enter') { editor.commitSelection(); return; }
-    if (S.doc && e.ctrlKey && k === 'a') { e.preventDefault(); setTool('select'); editor.selectAll(); return; }
-    if (S.doc && e.ctrlKey && k === 'c') { if (editor.copySelection()) toast('📋 Kopiert', 'ok'); return; }
-    if (editable && e.ctrlKey && k === 'x') { if (editor.copySelection()) { editor.deleteSelection(); toast('✂️ Ausgeschnitten', 'ok'); } return; }
-    if (editable && e.ctrlKey && k === 'v') { e.preventDefault(); setTool('select'); if (!editor.paste()) toast('Erst etwas kopieren (Strg+C)', 'bad'); return; }
-    if (e.ctrlKey && k === 'z' && !e.shiftKey) { e.preventDefault(); editor.undo(); renderDocBar(); return; }
-    if (e.ctrlKey && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); editor.redo(); renderDocBar(); return; }
-    if (e.ctrlKey || e.altKey) return;
+    if (S.doc && mod && k === 'a') { e.preventDefault(); setTool('select'); editor.selectAll(); return; }
+    if (S.doc && mod && k === 'c') { if (editor.copySelection()) toast('📋 Kopiert', 'ok'); return; }
+    if (editable && mod && k === 'x') { if (editor.copySelection()) { editor.deleteSelection(); toast('✂️ Ausgeschnitten', 'ok'); } return; }
+    if (editable && mod && k === 'v') { e.preventDefault(); setTool('select'); if (!editor.paste()) toast(`Erst etwas kopieren (${KEY}+C)`, 'bad'); return; }
+    if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); editor.undo(); renderDocBar(); return; }
+    if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); editor.redo(); renderDocBar(); return; }
+    if (mod || e.altKey) return;
     const tool = TOOLS.find((t) => t.key === k);
     if (tool) { setTool(tool.id); return; }
     if (k === '[' || k === ']') { setBrushSize(S.opt.size + (k === ']' ? 1 : -1)); return; } // Pinselgroesse

@@ -1,11 +1,15 @@
-// Baut das fertige Windows-Paket fuer GitHub-Releases:  node tools/paket.mjs
+// Baut die fertigen Pakete fuer GitHub-Releases:  node tools/paket.mjs
 //   release/MinecraftTexturen-<version>-Windows.zip   (Programm + eigenes Node + Startprogramm)
+//   release/MinecraftTexturen-<version>-Mac.zip       (Minecraft Texturen.app mit Node fuer Apple-Chip und Intel)
 //   release/themenwechsel-*.jar                        (die /thema-Mod einzeln, fuer Leute ohne Programm)
 // Vorlagen (editor/vorlagen) kommen NICHT mit - jeder macht seine eigenen Themen.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
+import { writeZip } from '../lib/zip.mjs';
+import { decodePng, encodePng } from '../lib/png.mjs';
 
 const EDITOR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = path.dirname(EDITOR);
@@ -64,8 +68,132 @@ Einstellungen: %APPDATA%\\MinecraftTexturen
 const zip = path.join(OUT, `MinecraftTexturen-${VERSION}-Windows.zip`);
 execFileSync('powershell', ['-NoProfile', '-Command', `Compress-Archive -Path '${STAGE}' -DestinationPath '${zip}' -CompressionLevel Optimal`], { stdio: 'inherit' });
 
+// ---------- Mac: "Minecraft Texturen.app" mit Node fuer Apple-Chip (arm64) und Intel (x64) ----------
+// Node fuer macOS kommt von nodejs.org (gleiche Version wie hier, Pruefsumme aus SHASUMS256.txt) und wird zwischengespeichert.
+const NODE_CACHE = path.join(ROOT, '.cache', 'node');
+const TAR = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'tar.exe'); // Windows-tar (Git-tar versteht C:\ nicht)
+async function macNode(arch) {
+  const name = `node-${process.version}-darwin-${arch}`;
+  const dir = path.join(NODE_CACHE, name);
+  if (fs.existsSync(path.join(dir, 'bin', 'node'))) return dir;
+  fs.mkdirSync(NODE_CACHE, { recursive: true });
+  const base = `https://nodejs.org/dist/${process.version}/`;
+  const sums = await (await fetch(base + 'SHASUMS256.txt')).text();
+  const want = sums.split('\n').find((l) => l.trim().endsWith(' ' + name + '.tar.gz'))?.split(/\s+/)[0];
+  if (!want) throw new Error('Keine Prüfsumme für ' + name);
+  const r = await fetch(base + name + '.tar.gz');
+  if (!r.ok) throw new Error(`Download ${name}: ${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (crypto.createHash('sha256').update(buf).digest('hex') !== want) throw new Error('Prüfsumme falsch: ' + name);
+  const tgz = path.join(NODE_CACHE, name + '.tar.gz');
+  fs.writeFileSync(tgz, buf);
+  execFileSync(TAR, ['-xzf', tgz, '-C', NODE_CACHE, `${name}/bin/node`, `${name}/LICENSE`]);
+  fs.rmSync(tgz);
+  return dir;
+}
+
+/** .icns aus dem Programmsymbol (128 px Pixel-Art, scharf vergroessert auf 256/512) */
+function macIcon() {
+  const src = decodePng(fs.readFileSync(path.join(EDITOR, 'public', 'icon.png')));
+  const scale = (n) => {
+    const f = n / src.width, data = new Uint8Array(n * n * 4);
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const s = ((Math.floor(y / f) * src.width) + Math.floor(x / f)) * 4;
+      data.set(src.data.subarray(s, s + 4), (y * n + x) * 4);
+    }
+    return Buffer.from(encodePng({ width: n, height: n, data }));
+  };
+  const parts = [['ic07', fs.readFileSync(path.join(EDITOR, 'public', 'icon.png'))], ['ic08', scale(256)], ['ic09', scale(512)]].map(([t, b]) => {
+    const h = Buffer.alloc(8); h.write(t, 0, 'ascii'); h.writeUInt32BE(b.length + 8, 4); return Buffer.concat([h, b]);
+  });
+  const body = Buffer.concat(parts), head = Buffer.alloc(8);
+  head.write('icns', 0, 'ascii'); head.writeUInt32BE(body.length + 8, 4);
+  return Buffer.concat([head, body]);
+}
+
+const MAC_ROOT = 'Minecraft Texturen/';
+const APP = MAC_ROOT + 'Minecraft Texturen.app/Contents/';
+const macEntries = [];
+const addTree = (dir, prefix, skip = () => false) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (skip(e.name)) continue;
+    if (e.isDirectory()) addTree(p, prefix + e.name + '/');
+    else macEntries.push({ name: prefix + e.name, data: fs.readFileSync(p) });
+  }
+};
+addTree(app, APP + 'Resources/app/', (n) => n === 'node'); // gleiche Programmdateien wie Windows, ohne node.exe
+for (const arch of ['arm64', 'x64']) {
+  const dir = await macNode(arch);
+  macEntries.push({ name: `${APP}Resources/node/${arch}/node`, data: fs.readFileSync(path.join(dir, 'bin', 'node')), mode: 0o755 });
+  if (arch === 'arm64') macEntries.push({ name: `${APP}Resources/node/LICENSE`, data: fs.readFileSync(path.join(dir, 'LICENSE')) });
+}
+macEntries.push({ name: `${APP}Resources/icon.icns`, data: macIcon() });
+macEntries.push({ name: `${APP}MacOS/Minecraft Texturen`, mode: 0o755, data: Buffer.from(`#!/bin/bash
+# Startet den kleinen Server; er oeffnet das Programmfenster (Chrome/Edge/Brave als App-Fenster, sonst den Standardbrowser)
+# und beendet sich, wenn das Fenster zu ist.
+RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+case "$(uname -m)" in
+  arm64) NODE="$RES/node/arm64/node" ;;
+  *)     NODE="$RES/node/x64/node" ;;
+esac
+mkdir -p "$HOME/Library/Logs"
+cd "$RES/app" || exit 1
+exec "$NODE" --no-warnings server.mjs --app >> "$HOME/Library/Logs/MinecraftTexturen.log" 2>&1
+`) });
+macEntries.push({ name: `${APP}Info.plist`, data: Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Minecraft Texturen</string>
+  <key>CFBundleDisplayName</key><string>Minecraft Texturen</string>
+  <key>CFBundleIdentifier</key><string>de.mctexturen.app</string>
+  <key>CFBundleVersion</key><string>${VERSION}</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>Minecraft Texturen</string>
+  <key>CFBundleIconFile</key><string>icon</string>
+  <key>LSMinimumSystemVersion</key><string>13.5</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+`) });
+macEntries.push({ name: MAC_ROOT + 'LIZENZ.txt', data: fs.readFileSync(path.join(ROOT, 'LICENSE')) });
+macEntries.push({ name: MAC_ROOT + 'LIES MICH.txt', data: Buffer.from(`Minecraft Texturen ${VERSION} für Mac (macOS 13.5 oder neuer, Apple-Chip und Intel)
+=================================================================
+
+Starten:
+  1. "Minecraft Texturen.app" in den Ordner "Programme" ziehen (geht auch ohne).
+  2. Doppelklicken. Das Programmfenster öffnet sich in Chrome, Edge oder Brave
+     (falls vorhanden) - sonst im normalen Browser (z. B. Safari).
+
+Beim ersten Start meldet macOS: "Minecraft Texturen kann nicht geöffnet werden",
+weil das Programm nicht bei Apple registriert ist. So geht's trotzdem:
+  - Systemeinstellungen -> Datenschutz & Sicherheit -> ganz unten bei
+    "Minecraft Texturen wurde blockiert" auf "Dennoch öffnen" klicken.
+  - Ältere macOS-Versionen: Rechtsklick auf die App -> "Öffnen" -> "Öffnen".
+  - Oder im Terminal:  xattr -dr com.apple.quarantine "/Applications/Minecraft Texturen.app"
+
+Das Programm findet deine Minecraft-Profile von selbst:
+  CurseForge (~/Documents/curseforge), Modrinth App, Lunar Client und den Minecraft Launcher.
+
+So geht's:
+  1. Oben ein Thema anlegen ("Thema" -> "Neues Thema").
+  2. Links eine Textur wählen und malen.
+  3. "Speichern" -> Profil wählen. Fertig.
+  Im Spiel: /thema <name> zum Wechseln, /thema normal für die Originale.
+
+Das Programm beendet sich von selbst ein paar Minuten nachdem das Fenster zu ist.
+Einstellungen: ~/Library/Application Support/MinecraftTexturen
+Protokoll bei Problemen: ~/Library/Logs/MinecraftTexturen.log
+`) });
+const macZip = path.join(OUT, `MinecraftTexturen-${VERSION}-Mac.zip`);
+fs.writeFileSync(macZip, writeZip(macEntries));
+
 // Mods einzeln
 for (const f of fs.readdirSync(path.join(EDITOR, 'mod-dateien')).filter((x) => x.endsWith('.jar'))) fs.copyFileSync(path.join(EDITOR, 'mod-dateien', f), path.join(OUT, f));
 
 console.log(`Fertig: ${zip} (${(fs.statSync(zip).size / 1e6).toFixed(1)} MB)`);
+console.log(`Fertig: ${macZip} (${(fs.statSync(macZip).size / 1e6).toFixed(1)} MB)`);
 for (const f of fs.readdirSync(OUT)) console.log('  ' + f);

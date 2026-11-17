@@ -1,6 +1,6 @@
 {
   "name": "minecraft-texturen",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Einfaches, buntes Malprogramm für Minecraft-Texturen – mit Themen, /thema-Befehl und Online-Konto.",
   "license": "MIT",
@@ -10,5 +10,7 @@
     "testserver": "node --no-warnings tools/testserver.mjs --neu",
     "paket": "node --no-warnings tools/paket.mjs"
   },
-  "engines": { "node": ">=22.13" }
+  "engines": {
+    "node": ">=22.13"
+  }
 }
