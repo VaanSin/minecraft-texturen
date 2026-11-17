@@ -131,3 +131,44 @@ export function timeline(anim, n) {
   const list = Array.isArray(anim?.frames) && anim.frames.length ? anim.frames : [...Array(n).keys()];
   return list.map((f) => (typeof f === 'number' ? { index: f, time: ft } : { index: f.index, time: f.time || ft })).filter((f) => f.index >= 0 && f.index < n);
 }
+
+// ---------- Sprite-Sheets ----------
+/**
+ * Moegliche Raster eines Sprite-Sheets fuer eine Textur (Seitenverhaeltnis w:fh).
+ * Gibt Vorschlaege [{ fw, fh, cols, rows, n }] zurueck, der in Texturgroesse zuerst.
+ */
+export function sheetLayouts(W, H, w, fh) {
+  const out = [];
+  for (let cols = 1; cols <= 64; cols++) {
+    if (W % cols) continue;
+    const cw = W / cols, ch = (cw * fh) / w;
+    if (!Number.isInteger(ch) || ch < 1 || H % ch) continue;
+    const rows = H / ch;
+    if (cols * rows > 256) continue;
+    out.push({ fw: cw, fh: ch, cols, rows, n: cols * rows });
+  }
+  // Texturgroesse zuerst, dann groessere Bilder (mehr Pixel), dann kleinere
+  return out.sort((a, b) => (b.fw === w) - (a.fw === w) || (b.fw >= w) - (a.fw >= w) || a.n - b.n);
+}
+
+/** Einzelbilder aus einem Sprite-Sheet (Zeile fuer Zeile); ganz leere Bilder am Ende fallen weg */
+export function framesFromSheet(img, { fw, fh, cols, rows }) {
+  const frames = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const f = new Uint8ClampedArray(fw * fh * 4);
+    for (let y = 0; y < fh; y++) f.set(img.data.subarray(((r * fh + y) * img.width + c * fw) * 4, ((r * fh + y) * img.width + c * fw + fw) * 4), y * fw * 4);
+    frames.push(f);
+  }
+  while (frames.length > 1 && frames[frames.length - 1].every((v, i) => i % 4 !== 3 || v === 0)) frames.pop();
+  return frames;
+}
+
+/** Einzelbilder zu einem Sprite-Sheet (Raster ohne Luecken – laesst sich wieder einlesen) */
+export function toSheet(frames, w, fh, cols = Math.ceil(Math.sqrt(frames.length))) {
+  const rows = Math.ceil(frames.length / cols), W = w * cols, H = fh * rows, data = new Uint8ClampedArray(W * H * 4);
+  frames.forEach((f, k) => {
+    const ox = (k % cols) * w, oy = Math.floor(k / cols) * fh;
+    for (let y = 0; y < fh; y++) data.set(f.subarray(y * w * 4, (y + 1) * w * 4), ((oy + y) * W + ox) * 4);
+  });
+  return { w: W, h: H, data, cols, rows };
+}

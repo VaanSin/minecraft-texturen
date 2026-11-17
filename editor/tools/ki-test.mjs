@@ -1,5 +1,6 @@
 // Prueft die Textur-KI ohne Browser: Verstehen von Beispielsaetzen + Malen.  node --no-warnings tools/ki-test.mjs
 import { parsePrompt, render, playerPreview, paletteFromImage, pixelate, drafts, foreground } from '../public/ki.js';
+import { toSheet, sheetLayouts, framesFromSheet } from '../public/animation.js';
 import { ZipReader } from '../lib/zip.mjs';
 import { decodePng } from '../lib/png.mjs';
 import { defaultRoots, scanProfiles, findJar } from '../lib/launchers.mjs';
@@ -51,6 +52,22 @@ for (const [text, styleName, check] of cases) {
   ok('Pixelbild: Gemälde voll bemalt', pic.picture && pic.motif === 'drache' && rp.data.every((v, i) => i % 4 !== 3 || v === 255));
   const ds = await drafts(parsePrompt('Spiderman Rüstung als Kupferrüstung', avail, null), new Map(parsePrompt('Spiderman Rüstung als Kupferrüstung', avail, null).targets.map((x) => [x, img(x)])), new Set(), { seed: 1 }, 6);
   ok('6 Entwürfe, nach Punkten sortiert', ds.length === 6 && ds.every((d, i) => i === 0 || ds[i - 1].score >= d.score), ds.map((d) => Math.round(d.score * 100)).join(','));
+}
+// Aufloesung und Sprite-Sheets
+{
+  const p32 = parsePrompt('brennendes Schwert in 32x32', avail, null);
+  const r32 = render(p32, new Map(p32.targets.map((x) => [x, img(x)])), new Set(), { seed: 1 })[0];
+  ok('„32x32“: Schwert in 32×32, 12 Bilder', p32.size === 32 && r32.w === 32 && r32.frameH === 32 && r32.h === 32 * 12);
+  const hd = parsePrompt('Spiderman Rüstung als Kupferrüstung in HD', avail, null);
+  const rhd = render(hd, new Map(hd.targets.map((x) => [x, img(x)])), new Set(), { seed: 1 });
+  ok('„HD“: Rüstung 128×64, Symbole 32×32', hd.scale === 2 && rhd.find((r) => /humanoid\//.test(r.path)).w === 128 && rhd.find((r) => /helmet/.test(r.path)).w === 32);
+  const gui = parsePrompt('Galaxie Hotbar 4x', avail, null);
+  ok('GUI bleibt in Originalgröße', render(gui, new Map(gui.targets.map((x) => [x, img(x)])), new Set(), { seed: 1 })[0].w === 182);
+  const frames = [0, 1, 2, 3, 4].map((k) => new Uint8ClampedArray(16 * 16 * 4).fill(k * 40 + 10));
+  const sh = toSheet(frames, 16, 16);
+  const lay = sheetLayouts(sh.w, sh.h, 16, 16)[0];
+  const back = framesFromSheet({ width: sh.w, height: sh.h, data: sh.data }, lay);
+  ok('Sprite-Sheet hin und zurück (5 Bilder)', back.length === 5 && back.every((f, k) => f[0] === k * 40 + 10), `${sh.w}×${sh.h}, Raster ${lay.cols}×${lay.rows}`);
 }
 // Bild mit Hintergrund freistellen: weisser Rand weg, Motiv zugeschnitten
 {

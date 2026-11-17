@@ -186,7 +186,9 @@ const ANIM_WORDS = { animiert: 'auto', animation: 'auto', animationen: 'auto', a
 const MOD_WORDS = { hell: 'light', helle: 'light', heller: 'light', hellen: 'light', helles: 'light', dunkel: 'dark', dunkle: 'dark', dunkler: 'dark', dunklen: 'dark', dunkles: 'dark',
   rostig: 'rust', rostige: 'rust', verrostet: 'rust', alt: 'rust', alte: 'rust', altes: 'rust', kaputt: 'rust', verwittert: 'rust', glaenzend: 'shiny', glaenzende: 'shiny', metallisch: 'shiny', poliert: 'shiny',
   matt: 'matt', blass: 'matt', kraeftig: 'vivid', knallig: 'vivid', knallige: 'vivid', grell: 'vivid' };
-const PICTURE_WORDS = new Set(['pixelbild', 'pixelart', 'bild', 'zeichnung', 'gemalt', 'malerei', 'poster', 'kunstwerk', 'zeichne', 'male', 'pixel']);
+const PICTURE_WORDS = new Set(['pixelbild', 'pixelart', 'bild', 'zeichnung', 'gemalt', 'malerei', 'poster', 'kunstwerk', 'zeichne', 'male']);
+/** Aufloesung: Wort -> Faktor */
+const SCALE_WORDS = { hd: 2, hochaufloesend: 2, detailliert: 2, detailreich: 2, feiner: 2, doppelt: 2, doppelte: 2, doppelter: 2, zweifach: 2, vierfach: 4, vierfache: 4, achtfach: 8, achtfache: 8, ultra: 4, uhd: 4 };
 const MOTIF_CONTEXT = new Set(['mit', 'drauf', 'darauf', 'aufdruck', 'emblem', 'logo', 'symbol', 'zeichen', 'motiv', 'von', 'vom', 'einem', 'einer', 'eines']);
 
 // alle bekannten Woerter (fuer das Zerlegen zusammengesetzter Woerter wie "eisschwert", "kupferruestung" und fuer Tippfehler)
@@ -280,6 +282,16 @@ export function parsePrompt(text, available, current = null) {
     }
   }
   // Mehrwort-Ziele ("xp kugeln", "xp balls", "herz des meeres")
+  // Aufloesung aus dem Text: "32x32", "64 x 64", "64 Pixel", "2x"/"4x", "HD", "doppelte Aufloesung"
+  let size = null, scale = null;
+  const dims = rest.match(/ (\d{2,3}) ?(?:x|mal) ?(\d{2,3}) /);
+  if (dims) { size = Number(dims[1]); rest = rest.replace(dims[0], ' '); }
+  const pxw = !size && rest.match(/ (16|32|64|128|256|512) ?(?:pixel|px|p) /);
+  if (pxw) { size = Number(pxw[1]); rest = rest.replace(pxw[0], ' '); }
+  const fx = rest.match(/ ([248]) ?(?:x|fach|mal) /);
+  if (fx && !size) { scale = Number(fx[1]); rest = rest.replace(fx[0], ' '); }
+  for (const [w, f] of Object.entries(SCALE_WORDS)) if (rest.includes(' ' + w + ' ')) { scale = Math.max(scale || 1, f); rest = rest.replace(' ' + w + ' ', ' '); }
+  rest = rest.replace(/ (aufloesung|resolution|pixeln?|px) /g, ' ');
   rest = rest.replace(/ xp (kugeln|kugel|balls|ball|orbs|orb) /g, ' xpkugeln ').replace(/ herz des meeres /g, ' herzdesmeeres ').replace(/ xp (leiste|bar) /g, ' xpleiste ');
   // 2) einzelne Woerter verstehen
   const tokens = [];
@@ -389,10 +401,10 @@ export function parsePrompt(text, available, current = null) {
     style.pattern = { kind: patterns[0], color: ['flames', 'camo', 'waves', 'bands', 'cracks', 'flowers'].includes(patterns[0]) ? 'second' : ['stars', 'sparkle'].includes(patterns[0]) ? 'light' : 'line', on: ['head', 'body', 'arms', 'legs', 'boots', 'belt', 'block', 'item'] };
   }
   // nur ein Motiv/Animation/Zusatz genannt: Originalfarben behalten
-  if (!style && (motif || animate || mods.size || picture)) {
+  if (!style && (motif || animate || mods.size || picture || size || scale)) {
     const animName = { burn: 'Brennend', pulse: 'Leuchtend', sparkle: 'Glitzernd', shine: 'Schimmernd', flow: 'Fließend', wave: 'Wellig', blink: 'Blinkend', rainbow: 'Regenbogen', auto: 'Animiert' }[animate];
     const motifName = motif ? 'mit ' + motif.charAt(0).toUpperCase() + motif.slice(1) : '';
-    const name = [animName, picture ? 'Pixelbild' : '', motifName].filter(Boolean).join(' ') || 'Originalfarben';
+    const name = [animName, picture ? 'Pixelbild' : '', motifName].filter(Boolean).join(' ') || (size || scale ? 'Höhere Auflösung' : 'Originalfarben');
     style = { id: 'original', name, colors: { main: '#8A8D93', second: '#FFFFFF', line: '#1A1A1E', light: '#FFFFFF' }, keepColors: true };
   }
   if (style && animate === 'burn' && !styles.length && !colors.length) {
@@ -402,7 +414,8 @@ export function parsePrompt(text, available, current = null) {
   if (style && mods.size) applyMods(style, mods);
   if (style) understood.unshift(style.name);
   if (motif) understood.push('Motiv ' + motif);
-  return { style, targets, targetName, pieces: pieceList, understood, unknown, notes, material, motif, picture, animate, fixes, mods: [...mods] };
+  if (size || scale) understood.push(size ? `${size}×${size}` : `${scale}× Auflösung`);
+  return { style, targets, targetName, pieces: pieceList, understood, unknown, notes, material, motif, picture, animate, fixes, mods: [...mods], size, scale };
 }
 
 /** hell/dunkel/kraeftig/matt auf alle Stilfarben, rostig/glaenzend als Malhinweis */
@@ -585,20 +598,26 @@ export function render(plan, sources, handle = new Set(), opts = {}) {
   const style = plan.style, seed = opts.seed || 1, variant = opts.variant || 0;
   const st = colorsOf(style);
   const out = [];
-  const libMotif = plan.motif ? motivPixels(plan.motif, 9) : null;
   for (const path of plan.targets) {
-    const src = sources.get(path);
-    if (!src) continue;
+    const orig = sources.get(path);
+    if (!orig) continue;
+    // Aufloesung: Original scharf vergroessern, dann in der neuen Groesse fein malen
+    const f = scaleFor(path, orig, plan);
+    const src = f > 1 ? upscale(orig, f) : orig;
+    const libMotif = plan.motif ? motivPixels(plan.motif, 9 * f) : null;
     const kind = path.startsWith('block/') ? 'block' : path.startsWith('item/') ? 'item' : path.startsWith('painting/') ? 'painting' : 'other';
     let data;
     if (isArmorLayer(path)) {
-      const motif = opts.image?.mode === 'motif' ? opts.image.motif8 : libMotif ? fitMotif(libMotif, 8, 8) : null;
+      const s = src.w / 64;
+      const motif = opts.image?.mode === 'motif' && opts.image.source ? pixelate(opts.image.source, 8 * s, 8 * s, opts.image.paletteColors?.slice(0, 8), { outline: false })
+        : libMotif ? fitMotif(libMotif, 8 * s, 8 * s) : null;
       data = paintArmor(src, style, st, { leggings: isLeggingsLayer(path), pieces: plan.pieces || ['helmet', 'chestplate', 'leggings', 'boots'], seed, motif, variant });
     } else if (plan.picture && opts.image?.mode !== 'pixel') {
       data = paintPicture(src, style, st, { motif: plan.motif, seed });
     } else {
-      const armorIcon = /_(helmet|chestplate|leggings|boots).png$/.test(path) && plan.pieces; // Motiv nur auf der Brust, nicht auf den kleinen Symbolen
-      data = paintGeneric(src, style, st, { kind, handle, seed, variant, motif: opts.image?.mode === 'motif' ? opts.image.motif16 : null, libMotif: armorIcon ? null : libMotif, pixelart: opts.image?.mode === 'pixel' ? opts.image : null });
+      const armorIcon = /_(helmet|chestplate|leggings|boots)\.png$/.test(path) && plan.pieces; // Motiv nur auf der Brust, nicht auf den kleinen Symbolen
+      const motif16 = opts.image?.mode === 'motif' ? (f > 1 && opts.image.source ? pixelate(opts.image.source, 16 * f, 16 * f, opts.image.paletteColors?.slice(0, 8), { outline: true }) : opts.image.motif16) : null;
+      data = paintGeneric(src, style, st, { kind, handle, seed, variant, motif: motif16, libMotif: armorIcon ? null : libMotif, pixelart: opts.image?.mode === 'pixel' ? opts.image : null });
     }
     refine(data, src.w, src.h, style.pattern?.kind);
     const res = { path, w: src.w, h: src.h, data };
@@ -610,9 +629,44 @@ export function render(plan, sources, handle = new Set(), opts = {}) {
       a.frames.forEach((f, k) => all.set(f, k * src.w * fh * 4));
       Object.assign(res, { data: all, h: fh * n, frameH: fh, anim: { frametime: a.frametime, ...(a.interpolate ? { interpolate: true } : {}) } });
     }
+    if (f > 1) res.scale = f;
     out.push(res);
   }
   return out;
+}
+
+/**
+ * Wie stark vergroessern? plan.size = Wunschbreite in Pixeln ("32x32", "64 Pixel"), plan.scale = Faktor (2x, HD).
+ * Nur Zweierpotenzen; Obergrenze 512 Pixel (Ruestung 256), GUI-Bilder bleiben (deren Raster haengt an der Groesse).
+ */
+export function scaleFor(path, src, plan) {
+  if (path.startsWith('gui/') || path.startsWith('misc/')) return 1;
+  let f = plan.scale || 1;
+  if (plan.size) f = Math.max(1, Math.round(plan.size / src.w));
+  f = 2 ** Math.round(Math.log2(Math.max(1, f)));
+  const max = isArmorLayer(path) ? 256 : 512;
+  while (f > 1 && src.w * f > max) f /= 2;
+  return f;
+}
+
+/** Bild scharf (ohne Glaetten) um den Faktor f vergroessern */
+export function upscale(img, f) {
+  const w = img.w * f, h = img.h * f, data = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const s = (Math.floor(y / f) * img.w + Math.floor(x / f)) * 4;
+    data.set(img.data.subarray(s, s + 4), (y * w + x) * 4);
+  }
+  return { w, h, data };
+}
+
+/** Einzelbilder zu einem Sprite-Sheet (Raster, ohne Luecken – so laesst es sich wieder einlesen) */
+export function spriteSheet(frames, w, fh, cols = Math.ceil(Math.sqrt(frames.length))) {
+  const rows = Math.ceil(frames.length / cols), W = w * cols, H = fh * rows, data = new Uint8ClampedArray(W * H * 4);
+  frames.forEach((f, k) => {
+    const ox = (k % cols) * w, oy = Math.floor(k / cols) * fh;
+    for (let y = 0; y < fh; y++) data.set(f.subarray(y * w * 4, (y + 1) * w * 4), ((oy + y) * W + ox) * 4);
+  });
+  return { w: W, h: H, data, cols, rows };
 }
 
 function lumRange(d, skip) {
@@ -647,7 +701,7 @@ function paintArmor(src, style, st, { leggings, pieces, seed, motif, variant }) 
   const keepFree = [];
   if (!leggings && allowed.has('head') && style.face && FACES[style.face]) keepFree.push([8, 8, 8, 8]);
   if (!leggings && allowed.has('body') && (motif || (style.emblem && EMBLEMS[style.emblem]))) {
-    const e = motif ? null : EMBLEMS[style.emblem], ew = e ? e[0].length : motif.w, eh = e ? e.length : motif.h;
+    const e = motif ? null : EMBLEMS[style.emblem], ew = e ? e[0].length : Math.ceil(motif.w / s), eh = e ? e.length : Math.ceil(motif.h / s);
     keepFree.push([20 + Math.floor((8 - ew) / 2) - 1, 20 + (e ? Math.max(1, Math.floor((7 - eh) / 2)) : 1) - 1, ew + 2, eh + 2]);
   }
   const free = (gx, gy) => keepFree.some(([x0, y0, rw, rh]) => gx >= x0 && gy >= y0 && gx < x0 + rw && gy < y0 + rh);
@@ -672,7 +726,7 @@ function paintArmor(src, style, st, { leggings, pieces, seed, motif, variant }) 
     if (pat && pat.on?.includes(role) && f.face !== 'top' && f.face !== 'bottom' && !free(Math.floor(x / s), Math.floor(y / s))) {
       const scaleF = s >= 2 ? Math.floor(s) : 1;
       if (pat.kind === 'edges') { if (isEdge(src.data, w, h, x, y)) c = st[pat.color]; }
-      else if (patternAt(pat.kind, Math.floor(f.fx), Math.floor(f.fy), f.fw, f.fh, seed, Math.floor(x / scaleF), Math.floor(y / scaleF))) c = pat.color === 'second' || pat.color === 'light' ? pick(ramp(st[pat.color]), 0.3 + t * 0.6) : mixC(c, st[pat.color], 0.8);
+      else if (patternAt(pat.kind, x - Math.round(f.ox * s), y - Math.round(f.oy * s), f.fw * scaleF, f.fh * scaleF, seed, x, y)) c = pat.color === 'second' || pat.color === 'light' ? pick(ramp(st[pat.color]), 0.3 + t * 0.6) : mixC(c, st[pat.color], 0.8);
     }
     c = finish(c, style, x, y, t, seed);
     out[i] = c[0]; out[i + 1] = c[1]; out[i + 2] = c[2]; out[i + 3] = 255;
@@ -680,7 +734,7 @@ function paintArmor(src, style, st, { leggings, pieces, seed, motif, variant }) 
   // Gesicht auf die Helm-Vorderseite, Motiv/Emblem auf die Brust
   if (!leggings && allowed.has('head') && style.face && FACES[style.face]) stamp(out, w, s, FACES[style.face], 8, 8, 8, 8, st, true);
   if (!leggings && allowed.has('body')) {
-    if (motif) stampMotif(out, w, s, motif, 20 + Math.floor((8 - motif.w) / 2), 21, motif.w, motif.h);
+    if (motif) stampMotif(out, w, 1, motif, 20 * s + Math.floor((8 * s - motif.w) / 2), 21 * s, motif.w, motif.h); // Motiv in voller Aufloesung
     else if (style.emblem && EMBLEMS[style.emblem]) {
       const e = EMBLEMS[style.emblem], ew = e[0].length, eh = e.length;
       stamp(out, w, s, e, 20 + Math.floor((8 - ew) / 2), 20 + Math.max(1, Math.floor((7 - eh) / 2)), ew, eh, st, false);
@@ -832,10 +886,40 @@ function paintPicture(src, style, st, { motif, seed }) {
       if (xx < w && yy < fh) { const i = (yy * w + xx) * 4; const c = mixC([pic[i], pic[i + 1], pic[i + 2]], [0, 0, 0], 0.3); pic[i] = c[0]; pic[i + 1] = c[1]; pic[i + 2] = c[2]; }
     }
     pasteMotif(pic, w, m, ox, oy);
+    // grosse Bilder: Licht von oben links, Schatten unten rechts auf dem Motiv (sieht plastisch aus)
+    if (sc >= 2) {
+      for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
+        const j = (y * m.w + x) * 4;
+        if (m.data[j + 3] < 128) continue;
+        const i = ((oy + y) * w + ox + x) * 4;
+        const lx = x % sc, ly = y % sc, k = ((sc - 1 - lx) + (sc - 1 - ly)) / (2 * (sc - 1)) - 0.5; // innerhalb jedes Motiv-Pixels
+        const g = (0.5 - (x / m.w + y / m.h) / 2) * 0.25 + k * 0.12;
+        const c = g > 0 ? mixC([pic[i], pic[i + 1], pic[i + 2]], [255, 255, 255], g) : mixC([pic[i], pic[i + 1], pic[i + 2]], [0, 0, 0], -g);
+        pic[i] = c[0]; pic[i + 1] = c[1]; pic[i + 2] = c[2];
+      }
+    }
     void base;
+  }
+  // grosse Bilder: Wolken am Taghimmel, Grasbueschel auf dem Boden
+  if (fh >= 32) {
+    for (let y = 0; y < fh - ground; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (!night && y < fh * 0.45 && noise(x * 0.5, y * 1.4, seed + 61, 3) > 0.7 && isSky(pic, i, top, bottom)) { pic[i] = 248; pic[i + 1] = 252; pic[i + 2] = 255; }
+    }
+    if (ground) for (let x = 0; x < w; x++) if (hash2(x, 7, seed + 71) < 0.35) {
+      const i = ((fh - ground - 1) * w + x) * 4;
+      if (isSky(pic, i, top, bottom)) { pic[i] = 70; pic[i + 1] = 150; pic[i + 2] = 50; }
+    }
   }
   for (let f0 = 0; f0 < h; f0 += fh) out.set(pic.subarray(0, Math.min(pic.length, (h - f0) * w * 4)), f0 * w * 4);
   return out;
+}
+
+/** Ist dieses Pixel noch Himmel (nicht Motiv/Schatten)? */
+function isSky(pic, i, top, bottom) {
+  const c = [pic[i], pic[i + 1], pic[i + 2]];
+  for (let k = 0; k <= 4; k++) { const s = mixC(top, bottom, k / 4); if (Math.abs(c[0] - Math.round(s[0])) + Math.abs(c[1] - Math.round(s[1])) + Math.abs(c[2] - Math.round(s[2])) < 6) return true; }
+  return false;
 }
 
 // ---------- Animationen ----------
@@ -853,9 +937,9 @@ function animKindFor(kind, style) {
 function animateFrames(kind0, base, w, fh, style, st, seed) {
   const kind = animKindFor(kind0, style);
   if (kind === 'burn') return burnFrames(base, w, fh, style, st, seed);
-  const eff = { pulse: 'pulse', sparkle: 'sparkle', shine: 'shine', wave: 'wave', rainbow: 'rainbow', blink: 'blink', flow: 'flow' }[kind] || 'pulse';
-  const opts = { pulse: [10, 2, true], sparkle: [8, 3, false], shine: [12, 2, false], wave: [12, 2, false], rainbow: [16, 2, false], blink: [2, 10, false], flow: [16, 2, false] }[eff];
-  const frames = makeEffect(eff, base, w, fh, { frames: opts[0], strength: eff === 'sparkle' ? 1 : 0.6, color: st.light, dir: 'down' });
+  const eff = { pulse: 'pulse', sparkle: 'sparkle', shine: 'shine', wave: 'wave', rainbow: 'rainbow', blink: 'blink', flow: 'flow', tint: 'tint' }[kind] || 'pulse';
+  const opts = { pulse: [10, 2, true], sparkle: [8, 3, false], shine: [12, 2, false], wave: [12, 2, false], rainbow: [16, 2, false], blink: [2, 10, false], flow: [16, 2, false], tint: [12, 2, true] }[eff];
+  const frames = makeEffect(eff, base, w, fh, { frames: opts[0], strength: eff === 'sparkle' ? 1 : 0.6, color: eff === 'tint' ? (style.keepColors ? [255, 80, 200] : st.second) : st.light, dir: 'down' });
   return { frames, frametime: opts[1], interpolate: opts[2] };
 }
 /** Flammen, die um das Item herum nach oben lodern (nahtlos wiederholt) */

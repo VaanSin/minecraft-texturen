@@ -5,7 +5,7 @@ import { PixelEditor, isTyping } from './editor.js';
 import { computeWarnings, describeAlpha } from './warnings.js';
 import { Viewer3D } from './viewer3d.js';
 import { parsePrompt, drafts as kiDrafts, styleFromPalette, paletteFromImage, pixelate, ideas, playerPreview, pretty, toHex as kiHex } from './ki.js';
-import { frameCount, frameHeight, getFrame, joinFrames, canAnimate, speedText, EFFECTS, makeEffect, blend, timeline } from './animation.js';
+import { frameCount, frameHeight, getFrame, joinFrames, canAnimate, speedText, EFFECTS, makeEffect, blend, timeline, sheetLayouts, framesFromSheet, toSheet } from './animation.js';
 
 const $ = (s) => document.querySelector(s);
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -1123,6 +1123,9 @@ function renderAnimBar() {
       ${!ca.ok ? `<span class="anim-warn" title="${esc(ca.why)}">⚠️ Läuft im Spiel ohne Mods nicht</span>` : ca.note ? `<span class="anim-note" title="${esc(ca.note)}">ℹ️ ab 1.20.2</span>` : ''}
       <span class="fill"></span>
       <button class="btn small primary" data-a="effect" ${ro ? 'disabled' : ''}>✨ Effekt-Assistent</button>
+      <button class="btn small" data-a="sheetload" ${ro ? 'disabled' : ''} title="Ein Sprite-Sheet (PNG mit Einzelbildern im Raster) als Animation laden – oder hier hineinziehen">📂 Sprite-Sheet laden</button>
+      <button class="btn small" data-a="sheetsave" ${n < 2 ? 'disabled' : ''} title="Alle Einzelbilder als ein PNG-Raster speichern">💾 Sprite-Sheet</button>
+      <input type="file" accept="image/png,image/*" id="sheetFile" hidden>
       <button class="btn small" data-a="help">❓ Hilfe</button>
       <button class="iconbtn sm" data-a="close" title="Leiste schließen">✕</button>
     </div>
@@ -1211,6 +1214,9 @@ function animAction(a, el) {
   if (a === 'help') return animHelp();
   if (a === 'play') { S.animPaused = !S.animPaused; el.textContent = S.animPaused ? '▶' : '⏸'; return; }
   if (S.theme === 'normal') return;
+  if (a === 'sheetsave') { const sh = toSheet(frames, d.w, fh); return savePng(sh.data, sh.w, sh.h, `${pretty(d.path)}-sprite-sheet.png`); }
+  if (S.theme === 'normal') return;
+  if (a === 'sheetload') { $('#sheetFile').click(); return; }
   if (a === 'effect') return effectDialog();
   if (a === 'add' || a === 'dup') { frames.splice(i + 1, 0, frames[i].slice()); return setFrames(frames, fh, i + 1); }
   if (a === 'blank') { frames.splice(i + 1, 0, new Uint8ClampedArray(frames[i].length)); return setFrames(frames, fh, i + 1); }
@@ -1222,6 +1228,10 @@ function animAction(a, el) {
 
 function bindAnimBar() {
   const bar = $('#animBar');
+  bar.addEventListener('change', (e) => { if (e.target.id === 'sheetFile' && e.target.files[0]) { loadSheetFile(e.target.files[0]); e.target.value = ''; } });
+  bar.addEventListener('dragover', (e) => { if (S.theme !== 'normal') { e.preventDefault(); bar.classList.add('drop'); } });
+  bar.addEventListener('dragleave', () => bar.classList.remove('drop'));
+  bar.addEventListener('drop', (e) => { e.preventDefault(); bar.classList.remove('drop'); if (S.theme !== 'normal' && e.dataTransfer.files[0]) loadSheetFile(e.dataTransfer.files[0]); });
   bar.addEventListener('click', (e) => {
     const f = e.target.closest('[data-f]');
     if (f) { S.animFrame = Number(f.dataset.f); renderAnimBar(); editor.focusFrame(S.animFrame, true); return; }
@@ -1267,6 +1277,7 @@ function effectDialog() {
         <label class="chk"><input type="checkbox" id="fxInterp"> Weich überblenden</label>
         <div class="hint" id="fxColorHint">🎨 Zielfarbe = deine aktuelle Farbe <span class="sw-btn" style="width:16px;height:16px;display:inline-block;vertical-align:middle"><i style="background:${css(S.color)}"></i></span></div>
       </div>
+      <div class="fx-sheet"><div class="muted small">Sprite-Sheet (alle Bilder):</div><canvas id="fxSheet"></canvas><button class="btn small" id="fxSave">💾 Als PNG speichern</button></div>
     </div>
     <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="fxGo">✨ Übernehmen</button></div>`);
   let frames = [], raf = null;
@@ -1281,6 +1292,8 @@ function effectDialog() {
     m.querySelector('#fxDirRow').hidden = eff.id !== 'flow';
     m.querySelector('#fxColorHint').hidden = eff.id !== 'tint';
     m.querySelectorAll('.fx').forEach((b) => b.classList.toggle('on', b.dataset.fx === eff.id));
+    const sh = toSheet(frames, d.w, fh);
+    drawFrame(m.querySelector('#fxSheet'), sh.data, sh.w, sh.h, 260, 110);
   };
   const t0 = performance.now();
   const loop = (now) => {
@@ -1308,6 +1321,7 @@ function effectDialog() {
     if (id === 'fxInterp') opts.interpolate = e.target.checked;
     build();
   });
+  m.querySelector('#fxSave').addEventListener('click', () => { const sh = toSheet(frames, d.w, fh); savePng(sh.data, sh.w, sh.h, `${pretty(d.path)}-${eff.id}-sprite-sheet.png`); });
   m.querySelector('#fxGo').addEventListener('click', () => {
     cancelAnimationFrame(raf); modalCancel = null; closeModal();
     const anim = { frametime: opts.ticks };
@@ -1318,6 +1332,68 @@ function effectDialog() {
   });
   build();
   raf = requestAnimationFrame(loop);
+}
+
+/** Pixel als PNG-Datei herunterladen (landet im Download-Ordner) */
+function savePng(data, w, h, name) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), w, h), 0, 0);
+  c.toBlob((b) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = name.replace(/[^\p{L}\p{N} ._-]/gu, '_');
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`💾 „${esc(a.download)}“ gespeichert (Download-Ordner)`, 'ok');
+  }, 'image/png');
+}
+
+/** Bild-Datei in Originalgroesse lesen (fuer Sprite-Sheets) */
+async function readImageRaw(file) {
+  const bmp = await createImageBitmap(file);
+  if (bmp.width * bmp.height > 4096 * 4096) throw new Error('Das Bild ist zu groß.');
+  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+  const g = c.getContext('2d'); g.drawImage(bmp, 0, 0);
+  const id = g.getImageData(0, 0, c.width, c.height);
+  return { width: id.width, height: id.height, data: id.data };
+}
+
+/** Einzelbilder (auch in anderer Aufloesung) als Animation in die offene Textur laden */
+function loadFrames(frames, fw, fh, anim) {
+  const d = S.doc;
+  editor.commitSelection();
+  editor.pushUndo();
+  d.w = fw;
+  d.data = joinFrames(frames, fw, fh);
+  d.h = fh * frames.length;
+  d.frameH = frames.length > 1 ? fh : null;
+  d.anim = frames.length > 1 ? { ...(anim || d.anim || { frametime: 2 }) } : null;
+  if (d.anim) delete d.anim.frames;
+  d.animDirty = true;
+  S.animFrame = 0; S.animOpen = true; S.animPaused = false;
+  editor.changed(); editor.fit();
+  renderAnimBar(); renderDocBar();
+}
+
+/** Sprite-Sheet-Datei laden: Raster erkennen (bei mehreren Moeglichkeiten fragen) */
+async function loadSheetFile(file) {
+  const d = S.doc;
+  if (!d || S.theme === 'normal') return;
+  try {
+    const img = await readImageRaw(file);
+    const fh0 = frameHeight(d);
+    const lays = sheetLayouts(img.width, img.height, d.w, fh0).filter((l) => l.fw >= d.w / 2 && l.n <= 128);
+    if (!lays.length) { toast(`Das Bild (${img.width}×${img.height}) passt nicht zu dieser Textur (${d.w}×${fh0} pro Bild). Die Einzelbilder müssen dasselbe Seitenverhältnis haben.`, 'bad'); return; }
+    let lay = lays[0];
+    if (lays.length > 1) {
+      const pick = await choose('Wie ist das Sprite-Sheet aufgebaut?', `Dein Bild ist ${img.width}×${img.height} Pixel groß. Die Textur hat ${d.w}×${fh0} pro Bild.`,
+        lays.slice(0, 4).map((l, i) => ({ v: String(i), t: `${l.n} ${l.n === 1 ? 'Bild' : 'Bilder'} à ${l.fw}×${l.fh}${l.fw > d.w ? ' (mehr Pixel)' : ''}`, cls: i === 0 ? 'primary' : '' })).concat([{ v: 'no', t: 'Abbrechen', cls: 'ghost' }]));
+      if (pick === null || pick === 'no') return;
+      lay = lays[Number(pick)];
+    }
+    const frames = framesFromSheet(img, lay);
+    loadFrames(frames, lay.fw, lay.fh);
+    toast(`📂 Sprite-Sheet geladen: ${frames.length} ${frames.length === 1 ? 'Bild' : 'Bilder'} à ${lay.fw}×${lay.fh}. Speichern nicht vergessen!`, 'ok');
+  } catch (e) { toast('Sprite-Sheet ging nicht: ' + e.message, 'bad'); }
 }
 
 function animHelp() {
@@ -1376,13 +1452,17 @@ function kiPlan(text) {
     plan.style = styleFromPalette(kiImage.palette, 'Farben aus „' + kiImage.name + '“');
     plan.understood.unshift(plan.style.name);
   }
+  if (S.kiEffect === 'none') plan.animate = null;
+  else if (S.kiEffect) plan.animate = S.kiEffect;
+  if (S.kiScale) { plan.scale = S.kiScale; plan.size = null; }
+  if (plan.animate && !plan.style) plan.style = { id: 'original', name: 'Animiert', colors: { main: '#8A8D93', second: '#FFFFFF', line: '#1A1A1E', light: '#FFFFFF' }, keepColors: true };
   const avail = new Set(S.textures);
   plan.targets = [...plan.targets.filter((p) => !kiEdit.removed.has(p)), ...kiEdit.added.filter((p) => avail.has(p) && !plan.targets.includes(p))];
   if (kiEdit.removed.size || kiEdit.added.length) plan.targetName = plan.targets.length === 1 ? pretty(plan.targets[0]) : `${plan.targets.length} Texturen`;
   return plan;
 }
 
-const ANIM_DE = { burn: 'brennt (Flammen)', pulse: 'leuchtet (pulsiert)', sparkle: 'glitzert', shine: 'Glanz läuft durch', flow: 'fließt', wave: 'Welle', blink: 'blinkt', rainbow: 'Regenbogen', auto: 'passend zum Stil' };
+const ANIM_DE = { tint: 'Farbwechsel', burn: 'brennt (Flammen)', pulse: 'leuchtet (pulsiert)', sparkle: 'glitzert', shine: 'Glanz läuft durch', flow: 'fließt', wave: 'Welle', blink: 'blinkt', rainbow: 'Regenbogen', auto: 'passend zum Stil' };
 function kiPlanHtml(plan) {
   if (!plan.style) return `<div class="ki-miss">🤔 Ich weiß noch nicht, wie es aussehen soll. Nenne eine Figur (Spider-Man, Creeper …), einen Stil (Feuer, Eis, Galaxie …), Farben, ein Motiv („mit Totenkopf“) – oder gib ein Bild dazu.</div>`;
   const st = plan.style, c = st.colors;
@@ -1390,7 +1470,8 @@ function kiPlanHtml(plan) {
   const rows = [
     `<div>🎨 <b>Stil:</b> ${esc(st.name)} ${st.keepColors ? '' : swatches([c.main, c.second, c.line, c.light])}${st.pattern ? ` · Muster: ${esc(PATTERN_DE[st.pattern.kind] || st.pattern.kind)}` : ''}${st.emblem ? ' · Emblem' : ''}${st.face ? ' · Gesicht' : ''}</div>`,
     plan.motif ? `<div>🖼️ <b>Motiv:</b> ${esc(plan.motif)}${plan.picture ? ' – als ganzes Pixelbild' : ''}</div>` : plan.picture ? '<div>🖼️ <b>Pixelbild</b> im Stil</div>' : '',
-    plan.animate ? `<div>🎬 <b>Animation:</b> ${esc(ANIM_DE[plan.animate] || plan.animate)}</div>` : '',
+    plan.animate ? `<div>🎬 <b>Animation:</b> ${esc(ANIM_DE[plan.animate] || plan.animate)} – du bekommst ein Sprite-Sheet</div>` : '',
+    plan.size || (plan.scale && plan.scale > 1) ? `<div>📐 <b>Auflösung:</b> ${plan.size ? `${plan.size}×${plan.size}` : `${plan.scale}× (z. B. 16×16 → ${16 * plan.scale}×${16 * plan.scale})`}</div>` : '',
     `<div class="tline">🎯 <b>Ziel${plan.targets.length === 1 ? '' : 'e'}:</b> ${chips || '<span class="ki-miss">keins – sag z. B. „Kupferrüstung“, „Schwert“, „XP-Kugeln“ oder öffne eine Textur</span>'}
       <input id="kiAdd" list="kiAddList" placeholder="＋ Textur dazu …" size="14"><datalist id="kiAddList"></datalist></div>`,
     plan.fixes?.length ? `<div class="ki-note">✏️ Verbessert: ${plan.fixes.map(esc).join(', ')}</div>` : '',
@@ -1417,6 +1498,8 @@ async function kiDialog() {
     <div id="kiMode" class="seg wide" hidden>
       <button data-kimode="colors">🎨 Nur Farben</button><button data-kimode="motif">🖼️ Farben + Motiv</button><button data-kimode="pixel">🧩 Ganzes Pixelbild</button>
     </div>
+    <div class="ki-opts"><span class="lbl">🎬 Effekt</span><button class="chip" data-kieffect="">aus dem Text</button><button class="chip" data-kieffect="none">keiner</button><button class="chip" data-kieffect="burn">🔥 Flammen</button><button class="chip" data-kieffect="shine">✨ Lauflicht</button><button class="chip" data-kieffect="wave">〰️ Welle</button><button class="chip" data-kieffect="pulse">💡 Leuchten</button><button class="chip" data-kieffect="rainbow">🌈 Regenbogen</button><button class="chip" data-kieffect="sparkle">⭐ Funkeln</button><button class="chip" data-kieffect="flow">🌊 Fließen</button><button class="chip" data-kieffect="blink">👁️ Blinken</button><button class="chip" data-kieffect="tint">🎨 Farbwechsel</button></div>
+    <div class="ki-opts"><span class="lbl">📐 Auflösung</span><button class="chip" data-kiscale="">aus dem Text</button><button class="chip" data-kiscale="1">Original</button><button class="chip" data-kiscale="2">2× (z. B. 32×32)</button><button class="chip" data-kiscale="4">4× (z. B. 64×64)</button></div>
     <div class="ki-where">🎮 Profil <select id="kiProf">${usable.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? 'selected' : ''}>${esc(p.name)} · ${esc(p.launcherName)} · Minecraft ${esc(p.version)}</option>`).join('')}</select>
       <span>· Thema: <b id="kiTheme"></b></span></div>
     <div id="kiPlan" class="ki-plan"></div>
@@ -1433,6 +1516,8 @@ async function kiDialog() {
     m.querySelector('#kiGo').disabled = !plan.style || !plan.targets.length;
     m.querySelector('#kiMode').hidden = !kiImage;
     m.querySelectorAll('[data-kimode]').forEach((b) => b.classList.toggle('on', b.dataset.kimode === (S.kiMode || 'colors')));
+    m.querySelectorAll('[data-kieffect]').forEach((b) => b.classList.toggle('on', b.dataset.kieffect === (S.kiEffect || '')));
+    m.querySelectorAll('[data-kiscale]').forEach((b) => b.classList.toggle('on', b.dataset.kiscale === String(S.kiScale || '')));
   };
   const showIdeas = () => { m.querySelector('#kiIdeas').innerHTML = ideas(4, ideaSeed++).map((t) => `<button class="chip" data-idea="${esc(t)}">${esc(t)}</button>`).join(''); };
   const setImage = async (file) => {
@@ -1468,6 +1553,10 @@ async function kiDialog() {
     if (e.target.closest('#kiNoImg')) { kiImage = null; m.querySelector('#kiImgInfo').textContent = 'oder Bild hier hineinziehen'; update(); return; }
     const mode = e.target.closest('[data-kimode]');
     if (mode) { S.kiMode = mode.dataset.kimode; update(); }
+    const ef = e.target.closest('[data-kieffect]');
+    if (ef) { S.kiEffect = ef.dataset.kieffect || null; update(); }
+    const sc = e.target.closest('[data-kiscale]');
+    if (sc) { S.kiScale = Number(sc.dataset.kiscale) || null; update(); }
   });
   m.querySelector('#kiProf').addEventListener('change', async (e) => {
     // anderes Profil: dort gelten andere Texturen (Version)
@@ -1575,7 +1664,8 @@ function kiChoose(plan, best, skin, seed) {
       <div class="ki-choice ${i === 0 ? 'top' : ''}">
         <div class="ki-choice-head"><b>Entwurf ${i + 1}</b>${i === 0 ? ' <span class="badge green">Empfehlung</span>' : ''}<span class="stars" title="${Math.round(d.score * 100)} Punkte">${stars(d.score)}</span></div>
         <div class="ki-choice-pics" data-c="${i}"></div>
-        <button class="btn ${i === 0 ? 'primary' : ''} small" data-take="${i}">✔ Diesen nehmen</button>
+        ${d.results.some((r) => r.frameH) ? `<div class="ki-sheet" data-sheet="${i}"><span class="muted small">🎞️ Sprite-Sheet (alle Bilder)</span></div>` : ''}
+        <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn ${i === 0 ? 'primary' : ''} small" data-take="${i}">${d.results.some((r) => r.frameH) ? '📥 In die Textur laden' : '✔ Diesen nehmen'}</button>${d.results.some((r) => r.frameH) ? `<button class="btn small" data-savesheet="${i}">💾 Sprite-Sheet</button>` : ''}</div>
       </div>`).join('')}</div>
     <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn" id="kiNew">🎲 6 neue Entwürfe</button></div>`);
   const anims = [];
@@ -1596,6 +1686,20 @@ function kiChoose(plan, best, skin, seed) {
       box.append(c);
       if (n > 1) anims.push({ c, r, fh, n, ft: r.anim?.frametime || 2, big });
     }
+  });
+  // Sprite-Sheets der animierten Entwuerfe (alle Einzelbilder im Raster)
+  const sheetOf = (r) => { const fh = r.frameH, n = Math.floor(r.h / fh); return toSheet([...Array(n).keys()].map((k) => r.data.slice(k * r.w * fh * 4, (k + 1) * r.w * fh * 4)), r.w, fh); };
+  best.forEach((d, i) => {
+    const box = m.querySelector(`[data-sheet="${i}"]`);
+    const r = d.results.find((x) => x.frameH);
+    if (!box || !r) return;
+    const sh = sheetOf(r), c = document.createElement('canvas');
+    drawFrame(c, sh.data, sh.w, sh.h, 190, 120); box.append(c);
+  });
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-savesheet]');
+    if (!b) return;
+    for (const r of best[Number(b.dataset.savesheet)].results.filter((x) => x.frameH)) { const sh = sheetOf(r); savePng(sh.data, sh.w, sh.h, `${pretty(r.path)}-sprite-sheet.png`); }
   });
   // animierte Entwuerfe abspielen
   const t0 = performance.now();

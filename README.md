@@ -48,7 +48,8 @@ Node.js ist jeweils schon dabei – nichts installieren.
 - **Hinweise** unten links (abschaltbar): fast unsichtbare Restpixel, falsche Größe, Durchsichtigkeit …
 - **Viele Texturen, einmal speichern**: bearbeitete Texturen bleiben Entwurf, „Alles speichern“ speichert alle.
 - **🎬 Animation**: Einzelbilder (doppeln, verschieben, löschen), Takt in Ticks, weich überblenden, Vorschau wie im Spiel,
-  Effekt-Assistent und eine Hilfe, was in Minecraft animierbar ist.
+  Effekt-Assistent und eine Hilfe, was in Minecraft animierbar ist. **Sprite-Sheets** (PNG mit Einzelbildern im Raster)
+  per Klick oder Hineinziehen laden – das Raster wird erkannt – und alle Bilder als ein Sprite-Sheet speichern.
 
 ## Textur-KI 🤖
 
@@ -61,7 +62,11 @@ Oben auf **🤖 KI**, dann beschreiben, was du willst. Die KI läuft komplett au
   Kärtchen – wegklicken oder weitere hinzufügen.
 - **Motive aus Worten**: „Schwert mit Totenkopf“, „Kupferrüstung mit Blitz“ – 30 eingebaute Pixel-Motive (Herz, Krone,
   Drache, Mond, Flamme, Pilz …). „**Pixelbild von einem Drachen**“ malt ein ganzes Bild mit Himmel und Boden.
-- **Animationen**: „brennendes Schwert“ lodert im Inventar, „leuchtende XP-Kugeln“, „glitzernde Spitzhacke“ …
+- **Animationen**: „brennendes Schwert“ lodert im Inventar, „leuchtende XP-Kugeln“, „glitzernde Spitzhacke“ … Oder den Effekt
+  direkt im KI-Fenster wählen (Flammen, Lauflicht, Welle, Leuchten, Regenbogen, Funkeln, Fließen, Blinken, Farbwechsel).
+  Du bekommst jeweils das **Sprite-Sheet** (alle Bilder im Raster) – mit einem Klick in die Textur laden oder als PNG speichern.
+- **Auflösung**: Original, 2× oder 4× wählen – oder einfach schreiben („32x32“, „64 Pixel“, „HD“). Muster, Flammen, Motive
+  und Pixelbilder werden dann wirklich feiner gemalt (große Bilder mit Wolken, Gras und Licht auf dem Motiv).
 - **Bild als Vorlage**: Hintergrund wird freigestellt, das Motiv zugeschnitten und als Farben, Aufdruck oder ganzes
   Pixelbild verwendet.
 - **Lässt sich Zeit**: Sie malt 6 Entwürfe, bewertet sie (Kontrast, Lesbarkeit, Sauberkeit) und zeigt dir die besten
