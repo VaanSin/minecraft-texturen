@@ -57,6 +57,11 @@ So geht's:
   Im Spiel: /thema <name> zum Wechseln, /thema normal für die Originale.
   (Den Befehl /thema installiert das Programm automatisch, wo es geht. Für Fabric braucht man die Fabric API.)
 
+Partikel und Animation:
+  Unter "KI" -> "Partikel & Animation" ein Motiv beschreiben oder ein eigenes Bild auswählen.
+  Beispiel: "Partikel mit rotierenden blauen Streifen". Die Bilder lassen sich als
+  Sprite-Sheet exportieren oder in eine ausgewählte Minecraft-Textur übernehmen.
+
 Eigener Java-Skin:
   1. Oben "Skins" wählen und selbst malen, ein PNG öffnen oder "Mit KI erstellen" wählen.
   2. Mit "Vorlage" kannst du ein eigenes Bild halbtransparent zum Abpausen auflegen.

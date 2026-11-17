@@ -72,6 +72,12 @@ Oben auf **🤖 KI**, dann beschreiben, was du willst. Die KI läuft komplett au
 - **Verschiedene Entwürfe**: Die KI probiert aus, wie Akzentkanten, Farbverläufe und unterschiedliche Farbflächen wirken.
   Aus sechs Versuchen zeigt sie bis zu drei sichtbar verschiedene Varianten.
 
+## Partikel und Animationen mit der KI
+
+Öffne **KI → Partikel & Animation** oder schreib im KI-Fenster zum Beispiel „Partikel mit rotierenden blauen Streifen, 16 Bilder“. Die KI entwirft drei animierte Varianten und zeigt alle Einzelbilder. Im Assistenten kannst du auch das **offene Einzelbild** oder **ein eigenes Bild** verwenden. Dein Motiv bleibt das Startbild und der Assistent erzeugt die folgenden Bilder. Bewegung, Richtung, Bildzahl und Takt lassen sich einstellen.
+
+Speichere das **Sprite-Sheet** als PNG oder lade die Animation in die ausgewählte Textur. Bei Partikeln wählst du ein vorhandenes Minecraft-Sprite als Ziel. Beim Speichern ins Thema schreibt der Editor den Bildstreifen und die Animationsdaten in das Ressourcenpaket.
+
 ## Eigene Java-Skins
 
 - **👤 Skins** öffnen und auf einer leeren Vorlage malen, ein Skin-PNG öffnen oder **Mit KI erstellen** wählen.

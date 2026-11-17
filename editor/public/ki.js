@@ -185,7 +185,9 @@ const ANIM_WORDS = { animiert: 'auto', animation: 'auto', animationen: 'auto', a
   flackernd: 'burn', flackert: 'burn', flackern: 'burn', brennend: 'burn', brennende: 'burn', brennendes: 'burn', brennenden: 'burn', brennt: 'burn', lodernd: 'burn', flammend: 'burn', burning: 'burn',
   leuchtend: 'pulse', leuchtende: 'pulse', leuchtendes: 'pulse', leuchtet: 'pulse', gluehend: 'pulse', gluehende: 'pulse', gluehendes: 'pulse', glueht: 'pulse', pulsierend: 'pulse', pulsiert: 'pulse', glowing: 'pulse',
   blinkend: 'blink', blinkt: 'blink', glitzernd: 'sparkle', glitzernde: 'sparkle', glitzert: 'sparkle', funkelnd: 'sparkle', funkelnde: 'sparkle', funkelt: 'sparkle', schimmernd: 'shine', schimmert: 'shine',
-  fliessend: 'flow', fliesst: 'flow', wabernd: 'flow', flowing: 'flow', wellend: 'wave' };
+  fliessend: 'flow', fliesst: 'flow', wabernd: 'flow', flowing: 'flow', wellend: 'wave',
+  drehen: 'rotate', dreht: 'rotate', drehend: 'rotate', drehende: 'rotate', drehendes: 'rotate', rotieren: 'rotate',
+  rotierend: 'rotate', rotierende: 'rotate', rotierendes: 'rotate', rotation: 'rotate', schwebend: 'bounce', schwebt: 'bounce' };
 /** Zusaetze, die den Stil veraendern */
 const MOD_WORDS = { hell: 'light', helle: 'light', heller: 'light', hellen: 'light', helles: 'light', dunkel: 'dark', dunkle: 'dark', dunkler: 'dark', dunklen: 'dark', dunkles: 'dark',
   rostig: 'rust', rostige: 'rust', verrostet: 'rust', alt: 'rust', alte: 'rust', altes: 'rust', kaputt: 'rust', verwittert: 'rust', glaenzend: 'shiny', glaenzende: 'shiny', metallisch: 'shiny', poliert: 'shiny',
@@ -406,7 +408,7 @@ export function parsePrompt(text, available, current = null) {
   }
   // nur ein Motiv/Animation/Zusatz genannt: Originalfarben behalten
   if (!style && (motif || animate || mods.size || picture || size || scale)) {
-    const animName = { burn: 'Brennend', pulse: 'Leuchtend', sparkle: 'Glitzernd', shine: 'Schimmernd', flow: 'Fließend', wave: 'Wellig', blink: 'Blinkend', rainbow: 'Regenbogen', auto: 'Animiert' }[animate];
+    const animName = { rotate: 'Drehend', bounce: 'Schwebend', burn: 'Brennend', pulse: 'Leuchtend', sparkle: 'Glitzernd', shine: 'Schimmernd', flow: 'Fließend', wave: 'Wellig', blink: 'Blinkend', rainbow: 'Regenbogen', auto: 'Animiert' }[animate];
     const motifName = motif ? 'mit ' + motif.charAt(0).toUpperCase() + motif.slice(1) : '';
     const name = [animName, picture ? 'Pixelbild' : '', motifName].filter(Boolean).join(' ') || (size || scale ? 'Höhere Auflösung' : 'Originalfarben');
     style = { id: 'original', name, colors: { main: '#8A8D93', second: '#FFFFFF', line: '#1A1A1E', light: '#FFFFFF' }, keepColors: true };
@@ -978,8 +980,8 @@ function animKindFor(kind, style) {
 function animateFrames(kind0, base, w, fh, style, st, seed) {
   const kind = animKindFor(kind0, style);
   if (kind === 'burn') return burnFrames(base, w, fh, style, st, seed);
-  const eff = { pulse: 'pulse', sparkle: 'sparkle', shine: 'shine', wave: 'wave', rainbow: 'rainbow', blink: 'blink', flow: 'flow', tint: 'tint' }[kind] || 'pulse';
-  const opts = { pulse: [10, 2, true], sparkle: [8, 3, false], shine: [12, 2, false], wave: [12, 2, false], rainbow: [16, 2, false], blink: [2, 10, false], flow: [16, 2, false], tint: [12, 2, true] }[eff];
+  const eff = { rotate: 'rotate', bounce: 'bounce', pulse: 'pulse', sparkle: 'sparkle', shine: 'shine', wave: 'wave', rainbow: 'rainbow', blink: 'blink', flow: 'flow', tint: 'tint' }[kind] || 'pulse';
+  const opts = { rotate: [16, 2, false], bounce: [12, 2, false], pulse: [10, 2, true], sparkle: [8, 3, false], shine: [12, 2, false], wave: [12, 2, false], rainbow: [16, 2, false], blink: [2, 10, false], flow: [16, 2, false], tint: [12, 2, true] }[eff];
   const frames = makeEffect(eff, base, w, fh, { frames: opts[0], strength: eff === 'sparkle' ? 1 : 0.6, color: eff === 'tint' ? (style.keepColors ? [255, 80, 200] : st.second) : st.light, dir: 'down' });
   return { frames, frametime: opts[1], interpolate: opts[2] };
 }

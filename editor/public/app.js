@@ -7,6 +7,7 @@ import { Viewer3D } from './viewer3d.js';
 import { parsePrompt, drafts as kiDrafts, styleFromPalette, paletteFromImage, pixelate, ideas, playerPreview, pretty, selectDrafts, generateSkinDrafts, toHex as kiHex } from './ki.js';
 import { frameCount, frameHeight, getFrame, joinFrames, canAnimate, speedText, EFFECTS, makeEffect, blend, timeline, sheetLayouts, framesFromSheet, toSheet } from './animation.js';
 
+import { MOTION_EFFECTS, wantsParticleWizard, parseMotionPrompt, motionDrafts } from './motion.js';
 import { SKIN_SIZE, MAX_SKIN_FRAMES, SKIN_ANIM_NOTE, skinFaces, blankSkin, launcherSkin, changeSkinModel, expandLegacySkin, skinFront } from './skin.js';
 
 const $ = (s) => document.querySelector(s);
@@ -1157,6 +1158,7 @@ function renderAnimBar() {
       <b>🎬 Animation</b><span class="muted">${n > 1 ? `${n} Bilder · ${d.w}×${frameHeight(d)}` : 'Noch keine Animation – mit ＋ oder dem Effekt-Assistenten anfangen'}</span>
       ${!ca.ok ? `<span class="anim-warn" title="${esc(ca.why)}">${S.skinMode ? '👤 Skin-Animation im Editor' : '⚠️ Läuft im Spiel ohne Mods nicht'}</span>` : ca.note ? `<span class="anim-note" title="${esc(ca.note)}">ℹ️ ab 1.20.2</span>` : ''}
       <span class="fill"></span>
+      ${S.skinMode ? '' : '<button class="btn small" data-a="ki-motion">🤖 Mit KI animieren</button>'}
       <button class="btn small primary" data-a="effect" ${ro ? 'disabled' : ''}>✨ Effekt-Assistent</button>
       <button class="btn small" data-a="sheetload" ${ro ? 'disabled' : ''} title="Ein Sprite-Sheet (PNG mit Einzelbildern im Raster) als Animation laden – oder hier hineinziehen">📂 Sprite-Sheet laden</button>
       <button class="btn small" data-a="sheetsave" ${n < 2 ? 'disabled' : ''} title="Alle Einzelbilder als ein PNG-Raster speichern">💾 Sprite-Sheet</button>
@@ -1249,6 +1251,7 @@ function animAction(a, el) {
   if (a === 'close') { S.animOpen = false; renderAnimBar(); return; }
   if (a === 'help') return animHelp();
   if (a === 'play') { S.animPaused = !S.animPaused; el.textContent = S.animPaused ? '▶' : '⏸'; return; }
+  if (a === 'ki-motion') return animationKiDialog({ source: 'current', prompt: '', target: canAnimate(d.path).ok ? d.path : '' });
   if (isReadOnly()) return;
   if (a === 'sheetsave') { const sh = toSheet(frames, d.w, fh); return savePng(sh.data, sh.w, sh.h, `${S.skinMode ? d.name || 'Skin' : pretty(d.path)}-sprite-sheet.png`); }
   if (a === 'sheetload') { $('#sheetFile').click(); return; }
@@ -1301,7 +1304,7 @@ function effectDialog() {
     <h2>✨ Effekt-Assistent</h2>
     <p>Macht aus <b>Bild ${(S.animFrame || 0) + 1}</b> eine fertige Animation. Danach kannst du jedes Bild noch nachmalen.</p>
     ${!ca.ok ? `<p class="hint">⚠️ ${esc(ca.why)}</p>` : ''}
-    <div class="fx-grid">${EFFECTS.map((e) => `<button class="fx ${e.id === eff.id ? 'on' : ''}" data-fx="${e.id}" title="${esc(e.tip)}"><span class="fx-ic">${e.icon}</span><b>${esc(e.name)}</b><small>${esc(e.tip)}</small></button>`).join('')}</div>
+    <div class="fx-grid">${EFFECTS.filter((e) => !S.skinMode || !['rotate', 'bounce', 'expand'].includes(e.id)).map((e) => `<button class="fx ${e.id === eff.id ? 'on' : ''}" data-fx="${e.id}" title="${esc(e.tip)}"><span class="fx-ic">${e.icon}</span><b>${esc(e.name)}</b><small>${esc(e.tip)}</small></button>`).join('')}</div>
     <div class="fx-row">
       <div class="fx-prev"><canvas id="fxPrev"></canvas></div>
       <div class="fx-opts">
@@ -1506,7 +1509,7 @@ function kiPlan(text) {
   return plan;
 }
 
-const ANIM_DE = { tint: 'Farbwechsel', burn: 'brennt (Flammen)', pulse: 'leuchtet (pulsiert)', sparkle: 'glitzert', shine: 'Glanz läuft durch', flow: 'fließt', wave: 'Welle', blink: 'blinkt', rainbow: 'Regenbogen', auto: 'passend zum Stil' };
+const ANIM_DE = { rotate: 'dreht sich', bounce: 'schwebt', tint: 'Farbwechsel', burn: 'brennt (Flammen)', pulse: 'leuchtet (pulsiert)', sparkle: 'glitzert', shine: 'Glanz läuft durch', flow: 'fließt', wave: 'Welle', blink: 'blinkt', rainbow: 'Regenbogen', auto: 'passend zum Stil' };
 function kiPlanHtml(plan) {
   if (!plan.style) return `<div class="ki-miss">🤔 Ich weiß noch nicht, wie es aussehen soll. Nenne eine Figur (Spider-Man, Creeper …), einen Stil (Feuer, Eis, Galaxie …), Farben, ein Motiv („mit Totenkopf“) – oder gib ein Bild dazu.</div>`;
   const st = plan.style, c = st.colors;
@@ -1533,7 +1536,7 @@ async function kiDialog() {
   const m = openModal(`
     <h2>🤖 Textur-KI <span class="muted small">läuft ohne Internet</span></h2>
     <p>Schreib, was du willst. Die KI malt mehrere Entwürfe und zeigt dir sichtbar unterschiedliche Varianten – erst <b>💾 Speichern</b> schreibt es ins Profil.</p>
-    <textarea id="kiText" rows="2" maxlength="300" placeholder="z. B. Spider-Man-Rüstung als Kupferrüstung · brennendes Diamantschwert · XP-Kugeln im Galaxie-Stil · Pixelbild von einem Drachen">${esc(S.kiText || '')}</textarea>
+    <textarea id="kiText" rows="2" maxlength="300" placeholder="z. B. Spider-Man-Rüstung als Kupferrüstung · brennendes Diamantschwert · Partikel mit rotierenden blauen Streifen · Pixelbild von einem Drachen">${esc(S.kiText || '')}</textarea>
     <div class="ki-ideas"><span>💡 Ideen:</span><span id="kiIdeas"></span><button class="iconbtn sm" id="kiMore" title="Andere Ideen">🔄</button></div>
     <div class="ki-image">
       <label class="btn small" title="Ein Bild (z. B. von Spider-Man) – die KI stellt das Motiv frei und nimmt Farben und Motiv">📷 Bild als Vorlage<input type="file" accept="image/*" id="kiFile" hidden></label>
@@ -1542,23 +1545,36 @@ async function kiDialog() {
     <div id="kiMode" class="seg wide" hidden>
       <button data-kimode="colors">🎨 Nur Farben</button><button data-kimode="motif">🖼️ Farben + Motiv</button><button data-kimode="pixel">🧩 Ganzes Pixelbild</button>
     </div>
-    <div class="ki-opts"><span class="lbl">🎬 Effekt</span><button class="chip" data-kieffect="">aus dem Text</button><button class="chip" data-kieffect="none">keiner</button><button class="chip" data-kieffect="burn">🔥 Flammen</button><button class="chip" data-kieffect="shine">✨ Lauflicht</button><button class="chip" data-kieffect="wave">〰️ Welle</button><button class="chip" data-kieffect="pulse">💡 Leuchten</button><button class="chip" data-kieffect="rainbow">🌈 Regenbogen</button><button class="chip" data-kieffect="sparkle">⭐ Funkeln</button><button class="chip" data-kieffect="flow">🌊 Fließen</button><button class="chip" data-kieffect="blink">👁️ Blinken</button><button class="chip" data-kieffect="tint">🎨 Farbwechsel</button></div>
+    <div class="ki-opts"><span class="lbl">🎬 Effekt</span><button class="chip" data-kieffect="">aus dem Text</button><button class="chip" data-kieffect="none">keiner</button><button class="chip" data-kieffect="burn">🔥 Flammen</button><button class="chip" data-kieffect="shine">✨ Lauflicht</button><button class="chip" data-kieffect="wave">〰️ Welle</button><button class="chip" data-kieffect="rotate">🌀 Drehen</button><button class="chip" data-kieffect="pulse">💡 Leuchten</button><button class="chip" data-kieffect="rainbow">🌈 Regenbogen</button><button class="chip" data-kieffect="sparkle">⭐ Funkeln</button><button class="chip" data-kieffect="flow">🌊 Fließen</button><button class="chip" data-kieffect="blink">👁️ Blinken</button><button class="chip" data-kieffect="tint">🎨 Farbwechsel</button></div>
     <div class="ki-opts"><span class="lbl">📐 Auflösung</span><button class="chip" data-kiscale="">aus dem Text</button><button class="chip" data-kiscale="1">Original</button><button class="chip" data-kiscale="2">2× (z. B. 32×32)</button><button class="chip" data-kiscale="4">4× (z. B. 64×64)</button></div>
     <div class="ki-where">🎮 Profil <select id="kiProf">${usable.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? 'selected' : ''}>${esc(p.name)} · ${esc(p.launcherName)} · Minecraft ${esc(p.version)}</option>`).join('')}</select>
       <span>· Thema: <b id="kiTheme"></b></span></div>
     <div id="kiPlan" class="ki-plan"></div>
-    <div class="actions"><button class="btn" id="kiForSkin">👤 Einen Skin erstellen</button><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="kiGo">✨ Los geht's</button></div>`);
+    <div class="actions"><button class="btn" id="kiForMotion">✨ Partikel &amp; Animation</button><button class="btn" id="kiForSkin">👤 Einen Skin erstellen</button><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="kiGo">✨ Los geht's</button></div>`);
   const text = m.querySelector('#kiText');
+  const motionPrompt = (plan) => wantsParticleWizard(text.value) || (!plan.targets.length && parseMotionPrompt(text.value).explicitEffect);
+  const openMotion = () => {
+    const prompt = text.value.trim();
+    const image = kiImage ? { name: kiImage.name, data: kiImage.img.data, w: kiImage.img.width, h: kiImage.img.height } : null;
+    const target = wantsParticleWizard(prompt) ? null : kiPlan(prompt).targets.find((p) => canAnimate(p).ok);
+    closeModal();
+    animationKiDialog({ prompt: prompt || undefined, image, source: image ? 'image' : 'generated', target });
+  };
+  m.querySelector('#kiForMotion').onclick = openMotion;
   m.querySelector('#kiForSkin').onclick = () => { const prompt = text.value; closeModal(); switchWorkspace(true); if (S.skinMode) skinDialog(prompt); };
   const update = () => {
     S.kiText = text.value;
     const plan = kiPlan(text.value);
     const keep = m.querySelector('#kiAdd')?.value || '';
-    m.querySelector('#kiPlan').innerHTML = kiPlanHtml(plan);
+    const motion = motionPrompt(plan);
+    m.querySelector('#kiPlan').innerHTML = motion
+      ? '✨ Im Partikel- und Animationsassistenten kannst du Motiv, Bewegung und Zieltextur wählen.'
+      : kiPlanHtml(plan);
     const add = m.querySelector('#kiAdd');
     if (add) add.value = keep;
     m.querySelector('#kiTheme').textContent = S.theme === 'normal' ? `neu: „${plan.style?.name || 'KI-Thema'}“` : themeName();
-    m.querySelector('#kiGo').disabled = !plan.style || !plan.targets.length;
+    m.querySelector('#kiGo').disabled = !motion && (!plan.style || !plan.targets.length);
+    m.querySelector('#kiGo').textContent = motion ? '✨ Animation entwerfen' : "✨ Los geht's";
     m.querySelector('#kiMode').hidden = !kiImage;
     m.querySelectorAll('[data-kimode]').forEach((b) => b.classList.toggle('on', b.dataset.kimode === (S.kiMode || 'colors')));
     m.querySelectorAll('[data-kieffect]').forEach((b) => b.classList.toggle('on', b.dataset.kieffect === (S.kiEffect || '')));
@@ -1612,6 +1628,7 @@ async function kiDialog() {
   });
   m.querySelector('#kiGo').addEventListener('click', async () => {
     const plan = kiPlan(text.value);
+    if (motionPrompt(plan)) return openMotion();
     if (!plan.style || !plan.targets.length) return;
     closeModal();
     await kiRun(plan, 1);
@@ -1619,6 +1636,187 @@ async function kiDialog() {
   showIdeas();
   update();
   text.focus();
+}
+
+// ---------- Partikel- und Animations-KI ----------
+function animationKiDialog(options = {}) {
+  editor.commitSelection();
+  const openDoc = S.doc;
+  const current = openDoc && { name: pretty(openDoc.path), w: openDoc.w, h: frameHeight(openDoc),
+    data: getFrame(openDoc, Math.min(S.animFrame || 0, frameCount(openDoc) - 1)) };
+  const partPaths = S.textures.filter((p) => p.startsWith('particle/') && p !== 'particle/particles.png');
+  const extra = [...new Set([options.target, openDoc?.path])].filter((p) => p && S.textures.includes(p) && canAnimate(p).ok && !partPaths.includes(p));
+  const defaultTarget = partPaths.includes(openDoc?.path) ? openDoc.path
+    : ['particle/flame.png', 'particle/flash.png', ...partPaths].find((p) => partPaths.includes(p)) || '';
+  const state = { prompt: 'Partikel mit blauen Streifen, die sich drehen', source: 'generated', image: null, effect: '',
+    target: defaultTarget, size: '', images: '', ticks: '', dir: '', ...options };
+  if (state.prompt === undefined) state.prompt = S.motionPrompt || 'Partikel mit blauen Streifen, die sich drehen';
+  if (state.target == null) state.target = defaultTarget;
+  const targetOptions = (paths) => paths.map((path) => `<option value="${esc(path)}">${esc(pretty(path))}</option>`).join('');
+  const m = openModal(`
+    <h2>✨ Partikel &amp; Animation <span class="muted small">läuft ohne Internet</span></h2>
+    <label class="field">Ausgangspunkt
+      <select id="motionSource">
+        <option value="generated">KI entwirft das Motiv und alle Bilder</option>
+        <option value="current" ${current ? '' : 'disabled'}>Offenes Einzelbild animieren</option>
+        <option value="image">Eigenes Bild animieren</option>
+      </select>
+    </label>
+    <div id="motionImageRow" class="row" hidden>
+      <label class="btn small">📂 Bild öffnen<input type="file" id="motionFile" accept="image/*" hidden></label>
+      <span id="motionImageInfo" class="muted"></span>
+    </div>
+    <p id="motionCurrentInfo" class="hint" hidden></p>
+    <label class="field">Was soll sich bewegen?
+      <textarea id="motionText" rows="2" maxlength="300" placeholder="z. B. blaue Streifen drehen sich gegen den Uhrzeigersinn, 16 Bilder"></textarea>
+    </label>
+    <div class="motion-settings">
+      <label class="field">Effekt<select id="motionEffect"><option value="">Aus dem Text</option>
+        ${MOTION_EFFECTS.map((e) => `<option value="${e.id}">${e.icon} ${e.name}</option>`).join('')}
+      </select></label>
+      <label class="field">Richtung<select id="motionDir"><option value="">Aus dem Text</option>
+        <option value="right">Rechts / im Uhrzeigersinn</option><option value="left">Links / gegen den Uhrzeigersinn</option>
+        <option value="up">Nach oben</option><option value="down">Nach unten</option>
+      </select></label>
+      <label class="field">Bildgröße<select id="motionSize"><option value="">Automatisch</option>
+        ${[16, 32, 64, 128].map((n) => `<option value="${n}">${n}×${n}</option>`).join('')}
+      </select></label>
+      <label class="field">Einzelbilder<input id="motionImages" type="number" min="4" max="32" step="1"></label>
+      <label class="field">Ticks pro Bild<input id="motionTicks" type="number" min="1" max="20" step="1"></label>
+    </div>
+    <label class="field">Ziel für die Übernahme
+      <select id="motionTarget"><option value="">Nur Sprite-Sheet exportieren</option>
+        ${extra.length ? `<optgroup label="Weitere Texturen">${targetOptions(extra)}</optgroup>` : ''}
+        ${partPaths.length ? `<optgroup label="Minecraft-Partikel">${targetOptions(partPaths)}</optgroup>` : ''}
+      </select>
+    </label>
+    <div id="motionPlan" class="ki-plan" aria-live="polite"></div>
+    <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="motionGo">✨ Animation entwerfen</button></div>`);
+  m.classList.add('draft-modal');
+  const select = (id) => m.querySelector('#motion' + id);
+  const bindings = { Text: 'prompt', Source: 'source', Effect: 'effect', Dir: 'dir', Size: 'size', Images: 'images', Ticks: 'ticks', Target: 'target' };
+  for (const [id, key] of Object.entries(bindings)) select(id).value = state[key];
+  let settings, loadingFile = false;
+  const update = () => {
+    for (const [id, key] of Object.entries(bindings)) state[key] = select(id).value;
+    S.motionPrompt = state.prompt;
+    const plan = parseMotionPrompt(state.prompt);
+    const generated = state.source === 'generated';
+    const source = state.source === 'current' ? current : state.source === 'image' ? state.image : null;
+    const effect = state.effect || (!generated && !plan.explicitEffect ? 'bounce' : plan.effect);
+    const profile = MOTION_EFFECTS.find((e) => e.id === effect);
+    const images = Number(state.images) || plan.frames || profile.frames;
+    const ticks = Number(state.ticks) || plan.ticks || profile.ticks;
+    const size = Number(state.size) || plan.size || 32;
+    for (const option of select('Dir').options) option.disabled = effect === 'rotate' && ['up', 'down'].includes(option.value);
+    if (select('Dir').selectedOptions[0]?.disabled) select('Dir').value = state.dir = '';
+    const dir = state.dir || plan.dir;
+    const ready = !loadingFile && (generated || !!source) && select('Images').validity.valid && select('Ticks').validity.valid;
+    const limited = source && Math.max(source.w, source.h) > 256;
+    select('ImageRow').hidden = state.source !== 'image';
+    select('ImageInfo').textContent = loadingFile ? 'Bild wird geladen …' : source && state.source === 'image' ? `${source.name} · ${source.w}×${source.h}` : 'PNG mit transparentem Hintergrund eignet sich gut.';
+    select('CurrentInfo').hidden = state.source !== 'current';
+    select('CurrentInfo').textContent = current ? `${current.name} · ${current.w}×${current.h}. Das offene Einzelbild bleibt als erstes Bild erhalten.` : '';
+    select('Size').disabled = !generated;
+    select('Dir').disabled = effect !== 'rotate' && effect !== 'flow';
+    select('Images').placeholder = images;
+    select('Ticks').placeholder = ticks;
+    const target = state.target.startsWith('particle/') ? 'Übernahme ersetzt das ausgewählte Partikel-Sprite im Thema.'
+      : state.target ? 'Übernahme bearbeitet die ausgewählte Textur im Thema.' : 'Du kannst die fertigen Einzelbilder als Sprite-Sheet speichern.';
+    select('Plan').innerHTML = limited ? 'Für das Startbild sind bis zu 256×256 Pixel möglich.' : `
+      <div><b>${profile.name}</b> · ${images} Bilder · ${ticks} ${ticks === 1 ? 'Tick' : 'Ticks'} pro Bild
+      ${generated ? ' · ' + size + '×' + size + ' · ' + swatches(plan.palette.map(kiHex)) : ''}</div>
+      <div class="hint">${target}</div>`;
+    select('Go').disabled = !ready || !!limited;
+    settings = { plan, source, effect, dir, images, ticks, size };
+  };
+  m.addEventListener('input', (e) => { if (e.target !== select('File')) update(); });
+  const readSprite = async (file) => {
+    if (!file || loadingFile) return;
+    loadingFile = true;
+    select('Source').value = 'image';
+    update();
+    try {
+      const image = await readImageFile(file);
+      state.image = { name: file.name.replace(/\.[^.]+$/, ''), w: image.width, h: image.height, data: image.data };
+    } catch (e) { if (m.isConnected) toast('Bild konnte nicht geöffnet werden. ' + esc(e.message), 'bad'); }
+    finally { loadingFile = false; if (m.isConnected) update(); }
+  };
+  select('File').addEventListener('change', (e) => { readSprite(e.target.files[0]); e.target.value = ''; });
+  m.addEventListener('dragover', (e) => { e.preventDefault(); m.classList.add('drop'); });
+  m.addEventListener('dragleave', () => m.classList.remove('drop'));
+  m.addEventListener('drop', (e) => { e.preventDefault(); m.classList.remove('drop'); readSprite(e.dataTransfer.files[0]); });
+  select('Go').addEventListener('click', () => {
+    try {
+      const drafts = motionDrafts(settings);
+      closeModal();
+      animationKiResults(drafts, state, settings);
+    } catch (e) { toast(esc(e.message), 'bad'); }
+  });
+  update();
+  select('Text').focus();
+}
+
+function animationKiResults(drafts, state, settings) {
+  const effectName = MOTION_EFFECTS.find((e) => e.id === settings.effect).name;
+  const m = openModal(`
+    <h2>🎬 ${effectName} · ${settings.images} Einzelbilder</h2>
+    <p>${settings.source ? 'Dein Sprite ist das erste Bild. Die KI hat daraus die weiteren Einzelbilder erzeugt.'
+      : 'Wähle einen Partikelentwurf. Alle Varianten laufen als Endlosschleife.'}</p>
+    <div class="ki-choices">
+      ${drafts.map((d, i) => `<div class="ki-choice">
+        <div class="ki-choice-head"><b>${esc(d.name)}</b><span class="muted">${d.w}×${d.h}</span></div>
+        <div class="ki-choice-pics"><canvas data-motion-prev="${i}" aria-label="${esc(d.name)} animiert"></canvas></div>
+        <div class="ki-sheet" data-motion-sheet="${i}"></div>
+        ${d.changes ? '' : '<p class="hint">Dieses Motiv sieht in der Bewegung gleich aus. Probiere eine andere Bewegung.</p>'}
+        <div class="row">
+          ${state.target ? `<button class="btn small primary" data-motion-take="${i}">✔ In Textur laden</button>` : ''}
+          <button class="btn small" data-motion-save="${i}">💾 Sprite-Sheet</button>
+        </div></div>`).join('')}
+    </div>
+    <div class="actions"><button class="btn ghost" data-close>Fertig</button><button class="btn" id="motionBack">↩️ Einstellungen ändern</button></div>`);
+  m.classList.add('draft-modal');
+  const sheets = drafts.map((d) => toSheet(d.frames, d.w, d.h));
+  m.querySelectorAll('[data-motion-sheet]').forEach((box, i) => {
+    const canvas = document.createElement('canvas'), sh = sheets[i];
+    canvas.setAttribute('aria-label', 'Alle Einzelbilder');
+    drawFrame(canvas, sh.data, sh.w, sh.h, 220, 112);
+    box.append(canvas);
+  });
+  const previews = [...m.querySelectorAll('[data-motion-prev]')];
+  const start = performance.now();
+  let last = -1, raf;
+  const preview = (now) => {
+    if (!m.isConnected) return;
+    const k = Math.floor((now - start) / (50 * settings.ticks)) % settings.images;
+    if (k !== last) drafts.forEach((d, i) => drawFrame(previews[i], d.frames[k], d.w, d.h, 140, 126));
+    last = k;
+    raf = requestAnimationFrame(preview);
+  };
+  preview(start);
+  modalCancel = () => cancelAnimationFrame(raf);
+  m.querySelector('#motionBack').onclick = () => { closeModal(); animationKiDialog(state); };
+  m.addEventListener('click', async (e) => {
+    const saveButton = e.target.closest('[data-motion-save]');
+    if (saveButton) {
+      const i = Number(saveButton.dataset.motionSave), sh = sheets[i];
+      savePng(sh.data, sh.w, sh.h, `${drafts[i].name}-sprite-sheet.png`);
+      return;
+    }
+    const take = e.target.closest('[data-motion-take]');
+    if (!take) return;
+    const d = drafts[Number(take.dataset.motionTake)];
+    for (const b of m.querySelectorAll('[data-motion-take]')) b.disabled = true;
+    try {
+      await ensureKiTheme('Partikel und Animation');
+      closeModal();
+      await kiApply([{ path: state.target, w: d.w, h: d.h * d.frames.length, data: joinFrames(d.frames, d.w, d.h),
+        frameH: d.h, anim: { frametime: d.ticks } }]);
+    } catch (e) {
+      toast('Animation konnte nicht übernommen werden. ' + esc(e.message), 'bad');
+      for (const b of m.querySelectorAll('[data-motion-take]')) b.disabled = false;
+    }
+  });
 }
 
 /** Fortschrittsfenster: die KI zeigt, woran sie gerade arbeitet */
@@ -1647,6 +1845,18 @@ function kiProgress(steps) {
   };
 }
 
+async function ensureKiTheme(label) {
+  if (S.theme !== 'normal') return;
+  const base = label.replace(/[^\p{L}\p{N} -]/gu, '').trim().slice(0, 26) || 'KI-Thema';
+  let name = base, n = 1;
+  while (S.themes.some((t) => t.name.toLowerCase() === name.toLowerCase())) name = `${base} ${++n}`;
+  const r = await post('/api/theme', { name });
+  S.themes = (await get('/api/info')).themes;
+  S.theme = r.theme.key;
+  post('/api/settings', { lastTheme: S.theme }).catch(() => {});
+  renderThemeButton();
+}
+
 /** KI: mehrere Entwuerfe malen, bewerten, die besten drei zur Auswahl zeigen */
 async function kiRun(plan, seed) {
   const steps = ['Wunsch verstehen', 'Farben, Muster und Motiv planen', 'Original-Texturen laden', 'Entwürfe malen', 'Entwürfe bewerten und verfeinern', 'Vorschau bauen'];
@@ -1654,16 +1864,7 @@ async function kiRun(plan, seed) {
     const p = kiProgress(steps);
     await p.step(0, `${plan.understood.slice(0, 4).join(', ') || plan.style.name}`);
     await p.step(1, `${plan.style.name}${plan.motif ? ' + Motiv ' + plan.motif : ''}${plan.animate ? ' + Animation' : ''}`);
-    if (S.theme === 'normal') {
-      // ohne Thema: eins nach dem Stil anlegen
-      let name = plan.style.name.replace(/[^\p{L}\p{N} -]/gu, '').slice(0, 30) || 'KI-Thema', n = 1;
-      while (S.themes.some((t) => t.name.toLowerCase() === name.toLowerCase())) name = `${plan.style.name.slice(0, 26)} ${++n}`;
-      const r = await post('/api/theme', { name });
-      S.themes = (await get('/api/info')).themes;
-      S.theme = r.theme.key;
-      post('/api/settings', { lastTheme: S.theme }).catch(() => {});
-      renderThemeButton();
-    }
+    await ensureKiTheme(plan.style.name);
     const sources = new Map();
     let k = 0;
     for (const t of plan.targets) {
@@ -1762,14 +1963,15 @@ function kiChoose(plan, best, skin, seed) {
     const b = e.target.closest('[data-take]');
     if (!b) return;
     cancelAnimationFrame(raf); modalCancel = null; closeModal();
-    await kiApply(plan, best[Number(b.dataset.take)].results);
+    await kiApply(best[Number(b.dataset.take)].results);
   });
 }
 
 /** Ergebnis als Entwuerfe einsetzen (mit Rueckgaengig je Textur) */
-async function kiApply(plan, results) {
+async function kiApply(results) {
+  editor.commitSelection();
   for (const r of results) {
-    let doc = S.drafts.get(r.path);
+    let doc = S.drafts.get(r.path) || (S.doc?.path === r.path ? S.doc : null);
     if (!doc) doc = await loadDoc(r.path);
     doc.undo.push({ w: doc.w, h: doc.h, data: doc.data.slice(), frameH: doc.frameH, anim: doc.anim ? structuredClone(doc.anim) : doc.anim });
     doc.redo.length = 0;
@@ -2194,6 +2396,7 @@ function skinDialog(prefill = S.skinPrompt || '') {
   const update = () => {
     S.skinPrompt = input.value;
     plan = parsePrompt(input.value, new Set());
+    if (['rotate', 'bounce'].includes(plan.animate)) plan.animate = null;
     if (image && !plan.style) plan.style = styleFromPalette(image.palette, 'Mein Bildmotiv');
     if (effect.value !== 'text') plan.animate = effect.value === 'none' ? null : effect.value;
     const style = plan.style;

@@ -3,11 +3,44 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { parsePrompt, render, playerPreview, paletteFromImage, pixelate, drafts, foreground, selectDrafts, draftDistance, generateSkinDrafts } from '../public/ki.js';
 import { skinFaces, blankSkin, launcherSkin, skinFront, changeSkinModel, expandLegacySkin } from '../public/skin.js';
-import { toSheet, sheetLayouts, framesFromSheet } from '../public/animation.js';
+import { toSheet, sheetLayouts, framesFromSheet, visibleBounds } from '../public/animation.js';
+import { wantsParticleWizard, parseMotionPrompt, motionDrafts } from '../public/motion.js';
 import { ZipReader } from '../lib/zip.mjs';
 import { decodePng } from '../lib/png.mjs';
 import { defaultRoots, scanProfiles, findJar } from '../lib/launchers.mjs';
 import os from 'node:os';
+
+// Die Partikel- und Animations-KI braucht keine Dateien aus dem Minecraft-Profil.
+{
+  const prompt = 'Rauchpartikel: blaue Streifen drehen sich gegen den Uhrzeigersinn, 16 Bilder, 3 Ticks in 32x32';
+  const plan = parseMotionPrompt(prompt);
+  assert.ok(wantsParticleWizard(prompt));
+  assert.ok(wantsParticleWizard('Partikelanimation mit Wirbeln'));
+  assert.equal(parseMotionPrompt('Dreh das Bild').explicitEffect, true);
+  assert.deepEqual([plan.shape, plan.effect, plan.dir, plan.size, plan.frames, plan.ticks], ['stripes', 'rotate', 'left', 32, 16, 3]);
+  assert.ok(plan.palette.every(([r, g, b]) => b > r && b > g));
+  const config = { plan, effect: plan.effect, dir: plan.dir, size: plan.size, images: plan.frames, ticks: plan.ticks };
+  const generated = motionDrafts(config);
+  const signature = (data) => Buffer.from(data).toString('base64');
+  assert.equal(new Set(generated.map((d) => signature(d.frames[0]))).size, 3);
+  for (const draft of generated) {
+    assert.equal(draft.frames.length, 16);
+    assert.ok(draft.changes);
+    assert.ok(draft.frames.every((f) => visibleBounds(f, 32, 32)));
+    assert.ok(new Set(draft.frames.map(signature)).size >= 8);
+  }
+  const data = new Uint8ClampedArray(15 * 11 * 4);
+  for (let x = 4; x < 10; x++) data.set(x === 9 ? [55, 80, 255, 255] : [210, 50, 100, 200], (5 * 15 + x) * 4);
+  const source = { name: 'Eigener Streifen', w: 15, h: 11, data };
+  const [left] = motionDrafts({ ...config, source });
+  const [right] = motionDrafts({ ...config, source, dir: 'right' });
+  assert.deepEqual(left.frames[0], data);
+  assert.equal(left.frames[0].length, 15 * 11 * 4);
+  assert.notDeepEqual(left.frames[4], right.frames[4]);
+  assert.ok(left.frames.every((f) => visibleBounds(f, 15, 11)));
+  assert.throws(() => motionDrafts({ ...config, source: { ...source, data: new Uint8ClampedArray(data.length) } }), /keine sichtbaren Pixel/);
+  console.log('  ok     Partikel-Entwürfe, Rotationsrichtung und unverändertes Startbild');
+}
 
 // Skins funktionieren auch ohne installierte Minecraft-Version.
 const { models } = JSON.parse(fs.readFileSync(new URL('../public/models.json', import.meta.url), 'utf8'));
