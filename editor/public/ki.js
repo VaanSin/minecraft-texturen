@@ -246,7 +246,13 @@ export function parsePrompt(text, available, current = null) {
   if (styles.length) style = structuredClone(styles[0]);
   if (colors.length) {
     const c = colors.map(toHex);
-    if (style) { style.colors.main = c[0]; if (c[1]) style.colors.second = c[1]; style.name += ' in ' + colorNames(colors); }
+    if (style) {
+      // ganze Palette mitdrehen: "blaues Feuer" = blau mit hellblauen Flammen statt blau mit gelben
+      const dh = hsl(colors[0])[0] - hsl(hex(style.colors.main))[0];
+      const rot = (h) => { const [hh, ss, ll] = hsl(hex(h)); return toHex(fromHsl((hh + dh + 360) % 360, ss, ll)); };
+      style.colors = { main: c[0], second: c[1] || rot(style.colors.second), line: rot(style.colors.line), light: rot(style.colors.light) };
+      style.name += ' in ' + colorNames(colors);
+    }
     else style = styleFromColors(colors);
   }
   if (style && styles.length > 1) { style.colors.second = styles[1].colors.main; style.name += ' + ' + styles[1].name; if (!style.pattern && styles[1].pattern) style.pattern = structuredClone(styles[1].pattern); }
@@ -464,7 +470,7 @@ function paintArmor(src, style, st, { leggings, pieces, seed, motif }) {
     const t = a ? clamp01((lum(src.data, i) - lo) / (hi - lo)) : 0.45 + 0.25 * noise(x, y, seed, 2);
     let key = roles[role] || 'main';
     let r = rampFor(key);
-    if (style.rainbow) r = ramp(fromHsl(((f.fx / Math.max(1, f.fw)) * 300 + (f.oy / s) * 7 + seed * 40) % 360, 0.85, 0.55));
+    if (style.rainbow) r = ramp(fromHsl(((f.fx / Math.max(1, f.fw)) * 300 + (f.oy / s) * 7 + (seed - 1) * 40) % 360, 0.85, 0.55));
     let c = style.keepColors && a ? [src.data[i], src.data[i + 1], src.data[i + 2]] : pick(r, 0.15 + t * 0.85);
     if (style.nebula) c = mixC(c, hex(style.colors.second), noise(x, y, seed + 3, 3) * 0.6);
     const pat = style.pattern;
@@ -532,7 +538,7 @@ function paintGeneric(src, style, st, { kind, handle, seed, motif, pixelart }) {
     if (!src.data[i + 3] || isHandle(i)) continue;
     const t = clamp01((lum(src.data, i) - lo) / (hi - lo));
     let r = rMain;
-    if (style.rainbow) r = ramp(fromHsl((((x + (y % fh)) / (w + fh)) * 330 + seed * 40) % 360, 0.9, 0.55)); // schraeger Regenbogen
+    if (style.rainbow) r = ramp(fromHsl((((y % fh) / fh) * 300 + x * 3 + (seed - 1) * 40) % 360, 0.95, 0.58)); // Regenbogen von oben nach unten
     let c = style.keepColors ? [src.data[i], src.data[i + 1], src.data[i + 2]] : pick(r, 0.1 + t * 0.9);
     // Glanzlichter in der Zweitfarbe (Akzent), sehr dunkle Pixel als Kontur
     if (t > 0.86 && !style.rainbow && !style.keepColors) c = pick(rSecond, 0.55 + (t - 0.86) * 3);
