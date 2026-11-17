@@ -4,6 +4,7 @@ import { toHex, fromHex, css, keyOf, unkey, percent, rainbowSort, QUICK, hsl as 
 import { PixelEditor, isTyping } from './editor.js';
 import { computeWarnings, describeAlpha } from './warnings.js';
 import { Viewer3D } from './viewer3d.js';
+import { frameCount, frameHeight, getFrame, joinFrames, canAnimate, speedText, EFFECTS, makeEffect, blend, timeline } from './animation.js';
 
 const $ = (s) => document.querySelector(s);
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -86,6 +87,7 @@ const editor = new PixelEditor($('#view'), {
   onPickEnd: () => { addRecent(S.color); },
   onReplace: (from, to) => S.doc.replaced.push({ from: from.slice(0, 3), to: to.slice() }),
   onZoom: (z) => { $('#zoomLabel').textContent = Math.round(z * 100) + ' %'; },
+  onRestore: () => { if (S.animOpen) renderAnimBar(); },
 });
 const viewer = new Viewer3D($('#view3d'), $('#modelSelect'));
 
@@ -232,6 +234,7 @@ async function loadDoc(p) {
     path: p, w: px.w, h: px.h, data: b64ToBytes(px.data), source: px.source, mcmeta: px.mcmeta,
     vanilla: px.vanilla ? { w: px.vanilla.w, h: px.vanilla.h, frameH: vanFrameH, data: b64ToBytes(px.vanilla.data) } : null,
     frameH, undo: [], redo: [], replaced: [], dirty: false,
+    anim: anim ? structuredClone(anim) : null, animDirty: false,
   };
 }
 
@@ -249,6 +252,8 @@ async function openTexture(p, force = false) {
   }
   S.doc = doc;
   editor.setDoc(S.doc);
+  S.animFrame = 0;
+  if (S.animOpen) renderAnimBar();
   $('#welcome').hidden = true;
   document.querySelectorAll('.tile.active').forEach((t) => t.classList.remove('active'));
   $('#grid').querySelector(`.tile[data-p="${CSS.escape(p)}"]`)?.classList.add('active');
@@ -315,6 +320,8 @@ function renderDocBar() {
   $('#undoBtn').disabled = !d?.undo.length;
   $('#redoBtn').disabled = !d?.redo.length;
   $('#growBtn').disabled = !d || ro;
+  $('#animBtn').disabled = !d;
+  $('#animBtn').classList.toggle('on', !!S.animOpen);
   $('#imageBtn').disabled = !d || ro;
   $('#revertBtn').disabled = !d || ro || !(S.changed.has(d.path) || S.drafts.has(d.path));
   $('#revertBtn').textContent = d && !S.changed.has(d.path) && S.drafts.has(d.path) ? '↩️ Verwerfen' : '♻️ Original';
@@ -335,7 +342,7 @@ function docChanged() {
   renderDocBar();
   viewer.update();
   clearTimeout(changeTimer);
-  changeTimer = setTimeout(() => { renderPalette(); renderWarnings(); }, 120);
+  changeTimer = setTimeout(() => { renderPalette(); renderWarnings(); if (S.animOpen) renderAnimThumbs(); }, 120);
 }
 
 // ---------- Speichern / Original ----------
@@ -368,8 +375,9 @@ async function save() {
     for (const d of drafts) {
       $('#saveBtn').innerHTML = `<span class="spinner"></span> ${drafts.length > 1 ? `${done + 1}/${drafts.length}` : 'Speichern'}`;
       try {
-        const r = await post('/api/save', { theme: S.theme, path: d.path, w: d.w, h: d.h, data: bytesToB64(d.data) });
-        d.dirty = false; d.source = 'thema';
+        const animation = d.animDirty ? (frameCount(d) > 1 ? { ...(d.anim || {}), height: d.frameH } : null) : undefined;
+        const r = await post('/api/save', { theme: S.theme, path: d.path, w: d.w, h: d.h, data: bytesToB64(d.data), animation });
+        d.dirty = false; d.source = 'thema'; d.animDirty = false;
         S.drafts.delete(d.path);
         S.changed.add(d.path);
         if (!S.textures.includes(d.path)) { S.textures.push(d.path); S.textures.sort(); } // neue Zusatz-Textur
@@ -1085,6 +1093,263 @@ async function newThemeDialog() {
   modal.querySelector('#tName').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
 }
 
+// ---------- Animation ----------
+/** Ein Einzelbild in eine kleine Leinwand zeichnen (scharfe Pixel) */
+function drawFrame(canvas, data, w, fh, maxW, maxH) {
+  const s = Math.max(1, Math.min(Math.floor(maxW / w) || 1, Math.floor(maxH / fh) || 1));
+  const fit = Math.min(maxW / w, maxH / fh);
+  const scale = w * s > maxW || fh * s > maxH ? fit : s;
+  canvas.width = Math.max(1, Math.round(w * scale)); canvas.height = Math.max(1, Math.round(fh * scale));
+  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = fh;
+  tmp.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data), w, fh), 0, 0);
+  const c = canvas.getContext('2d');
+  c.imageSmoothingEnabled = false;
+  c.clearRect(0, 0, canvas.width, canvas.height);
+  c.drawImage(tmp, 0, 0, canvas.width, canvas.height);
+}
+
+function renderAnimBar() {
+  const bar = $('#animBar'), d = S.doc;
+  $('#animBtn').classList.toggle('on', !!S.animOpen);
+  bar.hidden = !S.animOpen || !d;
+  if (bar.hidden) { editor.focusFrame(null, false); stopAnimPreview(); return; }
+  const n = frameCount(d), ro = S.theme === 'normal', ca = canAnimate(d.path);
+  S.animFrame = Math.max(0, Math.min(n - 1, S.animFrame || 0));
+  const a = d.anim || {}, ft = a.frametime || 1;
+  bar.innerHTML = `
+    <div class="anim-head">
+      <b>🎬 Animation</b><span class="muted">${n > 1 ? `${n} Bilder · ${d.w}×${frameHeight(d)}` : 'Noch keine Animation – mit ＋ oder dem Effekt-Assistenten anfangen'}</span>
+      ${!ca.ok ? `<span class="anim-warn" title="${esc(ca.why)}">⚠️ Läuft im Spiel ohne Mods nicht</span>` : ca.note ? `<span class="anim-note" title="${esc(ca.note)}">ℹ️ ab 1.20.2</span>` : ''}
+      <span class="fill"></span>
+      <button class="btn small primary" data-a="effect" ${ro ? 'disabled' : ''}>✨ Effekt-Assistent</button>
+      <button class="btn small" data-a="help">❓ Hilfe</button>
+      <button class="iconbtn sm" data-a="close" title="Leiste schließen">✕</button>
+    </div>
+    <div class="anim-body">
+      <div class="anim-preview" title="So sieht es im Spiel aus"><canvas id="animPrev"></canvas>
+        <button class="iconbtn sm" data-a="play" title="Abspielen / Anhalten">${S.animPaused ? '▶' : '⏸'}</button></div>
+      <div class="anim-strip" id="animStrip">
+        ${[...Array(n).keys()].map((i) => `<button class="aframe ${i === S.animFrame ? 'on' : ''}" data-f="${i}" title="Bild ${i + 1} bearbeiten"><canvas data-thumb="${i}"></canvas><span>${i + 1}</span></button>`).join('')}
+        <button class="aframe add" data-a="add" ${ro ? 'disabled' : ''} title="Neues Bild: Kopie vom gewählten Bild dahinter">＋</button>
+      </div>
+      <div class="anim-ctrl">
+        <div class="anim-row"><span class="lbl">Bild ${S.animFrame + 1}</span>
+          <button class="iconbtn sm" data-a="dup" ${ro ? 'disabled' : ''} title="Bild doppeln">⧉</button>
+          <button class="iconbtn sm" data-a="blank" ${ro ? 'disabled' : ''} title="Leeres Bild dahinter">⬜</button>
+          <button class="iconbtn sm" data-a="left" ${ro || S.animFrame === 0 ? 'disabled' : ''} title="Nach vorne schieben">◀</button>
+          <button class="iconbtn sm" data-a="right" ${ro || S.animFrame >= n - 1 ? 'disabled' : ''} title="Nach hinten schieben">▶</button>
+          <button class="iconbtn sm" data-a="del" ${ro || n < 2 ? 'disabled' : ''} title="Bild löschen">🗑️</button>
+        </div>
+        <label class="anim-row" title="1 Tick = 1/20 Sekunde"><span class="lbl">Takt</span><input type="range" min="1" max="40" value="${ft}" data-a="speed" ${ro || n < 2 ? 'disabled' : ''}><span id="animSpeed" class="muted">${speedText(ft)}</span></label>
+        <label class="anim-row"><input type="checkbox" data-a="interp" ${a.interpolate ? 'checked' : ''} ${ro || n < 2 ? 'disabled' : ''}> Weich überblenden <span class="muted">(Minecraft mischt zwischen den Bildern)</span></label>
+        ${n > 1 && !ro ? '<button class="btn small ghost" data-a="remove" title="Nur Bild 1 bleibt">Animation entfernen</button>' : ''}
+      </div>
+    </div>`;
+  renderAnimThumbs();
+  editor.focusFrame(n > 1 ? S.animFrame : null, false);
+  startAnimPreview();
+}
+
+function renderAnimThumbs() {
+  const d = S.doc;
+  if (!d || $('#animBar').hidden) return;
+  const fh = frameHeight(d);
+  $('#animBar').querySelectorAll('canvas[data-thumb]').forEach((c) => drawFrame(c, getFrame(d, Number(c.dataset.thumb)), d.w, fh, 72, 36));
+}
+
+let animTimer = null;
+function stopAnimPreview() { cancelAnimationFrame(animTimer); animTimer = null; }
+function startAnimPreview() {
+  stopAnimPreview();
+  const cv = $('#animPrev');
+  if (!cv) return;
+  const t0 = performance.now();
+  const tick = (now) => {
+    const d = S.doc;
+    if (!d || !cv.isConnected) return;
+    const n = frameCount(d), fh = frameHeight(d), tl = timeline(d.anim, n), total = tl.reduce((s, f) => s + f.time, 0) || 1;
+    // 1 Tick = 50 ms; angehalten: das gewaehlte Bild zeigen
+    let data;
+    if (S.animPaused || n < 2) data = getFrame(d, Math.min(S.animFrame || 0, n - 1));
+    else {
+      let t = ((now - t0) / 50) % total, k = 0;
+      while (k < tl.length - 1 && t >= tl[k].time) { t -= tl[k].time; k++; }
+      data = getFrame(d, tl[k].index);
+      if (d.anim?.interpolate) data = blend(data, getFrame(d, tl[(k + 1) % tl.length].index), t / tl[k].time);
+    }
+    drawFrame(cv, data, d.w, fh, 124, 58);
+    animTimer = requestAnimationFrame(tick);
+  };
+  animTimer = requestAnimationFrame(tick);
+}
+
+/** Einzelbilder ersetzen (mit Rueckgaengig). sel = danach gewaehltes Bild */
+function setFrames(frames, fh, sel, anim) {
+  const d = S.doc;
+  editor.commitSelection();
+  editor.pushUndo();
+  d.data = joinFrames(frames, d.w, fh);
+  d.h = fh * frames.length;
+  d.frameH = frames.length > 1 ? fh : null;
+  if (anim !== undefined) d.anim = anim;
+  if (frames.length > 1) { d.anim ||= { frametime: 2 }; delete d.anim.frames; } // eigene Reihenfolge passt nicht mehr
+  else d.anim = null;
+  d.animDirty = true;
+  S.animFrame = Math.max(0, Math.min(frames.length - 1, sel));
+  editor.changed();
+  renderAnimBar();
+  editor.focusFrame(frames.length > 1 ? S.animFrame : null, true);
+}
+
+function animAction(a, el) {
+  const d = S.doc;
+  if (!d) return;
+  const n = frameCount(d), fh = frameHeight(d), i = S.animFrame || 0;
+  const frames = [...Array(n).keys()].map((k) => getFrame(d, k));
+  if (a === 'close') { S.animOpen = false; renderAnimBar(); return; }
+  if (a === 'help') return animHelp();
+  if (a === 'play') { S.animPaused = !S.animPaused; el.textContent = S.animPaused ? '▶' : '⏸'; return; }
+  if (S.theme === 'normal') return;
+  if (a === 'effect') return effectDialog();
+  if (a === 'add' || a === 'dup') { frames.splice(i + 1, 0, frames[i].slice()); return setFrames(frames, fh, i + 1); }
+  if (a === 'blank') { frames.splice(i + 1, 0, new Uint8ClampedArray(frames[i].length)); return setFrames(frames, fh, i + 1); }
+  if (a === 'left' && i > 0) { [frames[i - 1], frames[i]] = [frames[i], frames[i - 1]]; return setFrames(frames, fh, i - 1); }
+  if (a === 'right' && i < n - 1) { [frames[i + 1], frames[i]] = [frames[i], frames[i + 1]]; return setFrames(frames, fh, i + 1); }
+  if (a === 'del' && n > 1) { frames.splice(i, 1); return setFrames(frames, fh, i - 1); }
+  if (a === 'remove') { return setFrames([frames[0]], fh, 0); }
+}
+
+function bindAnimBar() {
+  const bar = $('#animBar');
+  bar.addEventListener('click', (e) => {
+    const f = e.target.closest('[data-f]');
+    if (f) { S.animFrame = Number(f.dataset.f); renderAnimBar(); editor.focusFrame(S.animFrame, true); return; }
+    const b = e.target.closest('button[data-a]');
+    if (b && !b.disabled) animAction(b.dataset.a, b);
+  });
+  bar.addEventListener('input', (e) => {
+    const d = S.doc;
+    if (!d || S.theme === 'normal') return;
+    if (e.target.dataset.a === 'speed') {
+      d.anim = { ...(d.anim || {}), frametime: Number(e.target.value) };
+      d.animDirty = true;
+      $('#animSpeed').textContent = speedText(d.anim.frametime);
+      docChanged();
+    }
+    if (e.target.dataset.a === 'interp') {
+      d.anim = { ...(d.anim || {}), interpolate: e.target.checked };
+      if (!e.target.checked) delete d.anim.interpolate;
+      d.animDirty = true;
+      docChanged();
+    }
+  });
+}
+
+/** Effekt-Assistent: aus dem gewaehlten Bild eine fertige Animation machen */
+function effectDialog() {
+  const d = S.doc;
+  const fh = frameHeight(d), base = getFrame(d, S.animFrame || 0);
+  const ca = canAnimate(d.path);
+  let eff = EFFECTS[0], opts = { frames: eff.frames, ticks: eff.ticks, strength: 0.6, dir: 'down', interpolate: !!eff.interpolate };
+  const m = openModal(`
+    <h2>✨ Effekt-Assistent</h2>
+    <p>Macht aus <b>Bild ${(S.animFrame || 0) + 1}</b> eine fertige Animation. Danach kannst du jedes Bild noch nachmalen.</p>
+    ${!ca.ok ? `<p class="hint">⚠️ ${esc(ca.why)}</p>` : ''}
+    <div class="fx-grid">${EFFECTS.map((e) => `<button class="fx ${e.id === eff.id ? 'on' : ''}" data-fx="${e.id}" title="${esc(e.tip)}"><span class="fx-ic">${e.icon}</span><b>${esc(e.name)}</b><small>${esc(e.tip)}</small></button>`).join('')}</div>
+    <div class="fx-row">
+      <div class="fx-prev"><canvas id="fxPrev"></canvas></div>
+      <div class="fx-opts">
+        <label>Bilder <b id="fxN"></b><input type="range" min="2" max="32" id="fxFrames"></label>
+        <label>Takt <b id="fxT"></b><input type="range" min="1" max="20" id="fxTicks"></label>
+        <label>Stärke <b id="fxS"></b><input type="range" min="10" max="100" id="fxStrength"></label>
+        <label id="fxDirRow">Richtung <select id="fxDir"><option value="down">⬇️ nach unten</option><option value="up">⬆️ nach oben</option><option value="right">➡️ nach rechts</option><option value="left">⬅️ nach links</option></select></label>
+        <label class="chk"><input type="checkbox" id="fxInterp"> Weich überblenden</label>
+        <div class="hint" id="fxColorHint">🎨 Zielfarbe = deine aktuelle Farbe <span class="sw-btn" style="width:16px;height:16px;display:inline-block;vertical-align:middle"><i style="background:${css(S.color)}"></i></span></div>
+      </div>
+    </div>
+    <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="fxGo">✨ Übernehmen</button></div>`);
+  let frames = [], raf = null;
+  const prev = m.querySelector('#fxPrev');
+  const build = () => {
+    frames = makeEffect(eff.id, base, d.w, fh, { ...opts, color: S.color.slice(0, 3) });
+    m.querySelector('#fxN').textContent = opts.frames;
+    m.querySelector('#fxT').textContent = speedText(opts.ticks);
+    m.querySelector('#fxS').textContent = Math.round(opts.strength * 100) + ' %';
+    m.querySelector('#fxFrames').value = opts.frames; m.querySelector('#fxTicks').value = opts.ticks;
+    m.querySelector('#fxStrength').value = Math.round(opts.strength * 100); m.querySelector('#fxInterp').checked = opts.interpolate;
+    m.querySelector('#fxDirRow').hidden = eff.id !== 'flow';
+    m.querySelector('#fxColorHint').hidden = eff.id !== 'tint';
+    m.querySelectorAll('.fx').forEach((b) => b.classList.toggle('on', b.dataset.fx === eff.id));
+  };
+  const t0 = performance.now();
+  const loop = (now) => {
+    if (!prev.isConnected) return;
+    const total = frames.length * opts.ticks, t = ((now - t0) / 50) % total, k = Math.floor(t / opts.ticks);
+    let data = frames[k];
+    if (opts.interpolate) data = blend(data, frames[(k + 1) % frames.length], (t % opts.ticks) / opts.ticks);
+    drawFrame(prev, data, d.w, fh, 260, 120);
+    raf = requestAnimationFrame(loop);
+  };
+  modalCancel = () => cancelAnimationFrame(raf);
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fx]');
+    if (!b) return;
+    eff = EFFECTS.find((x) => x.id === b.dataset.fx);
+    opts = { ...opts, frames: eff.frames, ticks: eff.ticks, interpolate: !!eff.interpolate };
+    build();
+  });
+  m.addEventListener('input', (e) => {
+    const id = e.target.id;
+    if (id === 'fxFrames') opts.frames = Number(e.target.value);
+    if (id === 'fxTicks') opts.ticks = Number(e.target.value);
+    if (id === 'fxStrength') opts.strength = Number(e.target.value) / 100;
+    if (id === 'fxDir') opts.dir = e.target.value;
+    if (id === 'fxInterp') opts.interpolate = e.target.checked;
+    build();
+  });
+  m.querySelector('#fxGo').addEventListener('click', () => {
+    cancelAnimationFrame(raf); modalCancel = null; closeModal();
+    const anim = { frametime: opts.ticks };
+    if (opts.interpolate) anim.interpolate = true;
+    setFrames(frames, fh, 0, anim);
+    S.animPaused = false;
+    toast(`✨ ${eff.name}: ${frames.length} Bilder – jetzt kannst du jedes Bild noch nachmalen. Speichern nicht vergessen!`, 'ok');
+  });
+  build();
+  raf = requestAnimationFrame(loop);
+}
+
+function animHelp() {
+  openModal(`
+    <h2>❓ So funktionieren Animationen</h2>
+    <div class="help">
+      <p>🎞️ Eine Animation sind <b>mehrere Bilder untereinander</b> in einer Textur. Minecraft zeigt sie nacheinander – wie ein Daumenkino. Die Bilder sind auf der Malfläche durch blaue Linien getrennt; das gewählte Bild ist gelb umrahmt.</p>
+      <p>⏱️ <b>Takt</b>: Minecraft rechnet in <b>Ticks</b>. 20 Ticks sind 1 Sekunde. Takt 2 = 10 Bilder pro Sekunde (flott), Takt 10 = 2 Bilder pro Sekunde (gemütlich).</p>
+      <p>🌫️ <b>Weich überblenden</b>: Minecraft mischt zwischen zwei Bildern. Super für Leuchten und Farbwechsel, schlecht für Blinken.</p>
+      <h3>Beispiel: leuchtende XP-Leiste</h3>
+      <ol>
+        <li>Links suchen: <code>experience bar progress</code> und anklicken (die grüne Füllung).</li>
+        <li>Nach Wunsch umfärben (Farbe rechts anklicken → „überall ersetzen“).</li>
+        <li><b>🎬 Animation</b> → <b>✨ Effekt-Assistent</b> → <b>Lauflicht</b> oder <b>Welle</b> → <b>Übernehmen</b>.</li>
+        <li>Einzelbilder unten anklicken und nachmalen, wenn du willst.</li>
+        <li><b>💾 Speichern</b> – im Spiel <b>F3+T</b> drücken. Fertig!</li>
+      </ol>
+      <h3>Was kann man animieren?</h3>
+      <ul>
+        <li>✅ Blöcke, Items, Partikel, Effekt-Symbole</li>
+        <li>✅ GUI-Bilder unter <code>gui/sprites</code> (Hotbar, XP-Leiste, Herzen, Hunger …) – ab Minecraft 1.20.2</li>
+        <li>❌ Mobs, Spieler, Rüstung am Körper – nur mit Mods (z. B. „Entity Texture Features“)</li>
+      </ul>
+      <h3>Tipps</h3>
+      <ul>
+        <li>Mit <b>＋</b> kopierst du das gewählte Bild – dann nur kleine Änderungen malen, das sieht am flüssigsten aus.</li>
+        <li>Wenige Bilder reichen oft: 8–12 für Glanz und Wellen, 2 für Blinken.</li>
+        <li>Rückgängig (${KEY}+Z) klappt auch für neue, gelöschte und verschobene Bilder.</li>
+      </ul>
+    </div>
+    <div class="actions"><button class="btn primary" data-close>Alles klar!</button></div>`);
+}
+
 // ---------- Online-Konto ----------
 async function refreshKonto() {
   try { S.konto = await get('/api/konto'); } catch { S.konto = { configured: false, user: null }; }
@@ -1467,6 +1732,8 @@ function bindUi() {
     S.info.settings.showGrid = on; post('/api/settings', { showGrid: on }).catch(() => {});
   });
   $('#settingsBtn').addEventListener('click', settingsDialog);
+  $('#animBtn').addEventListener('click', () => { S.animOpen = !S.animOpen; renderAnimBar(); });
+  bindAnimBar();
   $('#kontoBtn').addEventListener('click', () => kontoDialog());
 
   $('#profileBtn').addEventListener('click', (e) => { e.stopPropagation(); const m = $('#profileMenu'); if (m.hidden) openProfileMenu().catch((er) => toast(er.message, 'bad')); else m.hidden = true; });

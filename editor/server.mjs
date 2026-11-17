@@ -225,7 +225,7 @@ async function handle(req, res) {
     if (p === '/api/save') {
       const data = new Uint8Array(Buffer.from(b.data, 'base64'));
       if (data.length !== b.w * b.h * 4) throw new Error('Bilddaten passen nicht zur Größe');
-      const r = store.save(b.theme, b.path, { width: b.w, height: b.h, data });
+      const r = store.save(b.theme, b.path, { width: b.w, height: b.h, data }, b.animation); // animation: nur wenn im Animations-Werkzeug geaendert
       lastMod = ensureMod(settings.instanceDir, MOD_DIRS, ROOTS); // /thema gleich mitinstallieren
       return json(res, { ok: true, ...r, profile: currentName, mod: lastMod });
     }

@@ -20,6 +20,26 @@ export function themeKey(text) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+/** Animationsangaben pruefen: nur bekannte Felder, sinnvolle Zahlen, Bildhoehe passt zum Bild. */
+function cleanAnimation(a, img) {
+  const out = {};
+  const int = (v, lo, hi) => (Number.isInteger(v) && v >= lo && v <= hi ? v : null);
+  const ft = int(a?.frametime, 1, 2000);
+  if (ft && ft !== 1) out.frametime = ft;
+  if (a?.interpolate === true) out.interpolate = true;
+  const h = int(a?.height, 1, img.height);
+  if (h && img.height % h !== 0) throw new Error(`Die Bildhöhe ${h} passt nicht zur Texturhöhe ${img.height}.`);
+  const fh = h || Math.min(img.width, img.height);
+  if (h && h !== img.width) out.height = h;
+  if (int(a?.width, 1, img.width) && a.width !== img.width) out.width = a.width;
+  if (Array.isArray(a?.frames)) {
+    const n = Math.floor(img.height / fh);
+    const frames = a.frames.slice(0, 512).map((f) => (typeof f === 'number' ? int(f, 0, n - 1) : f && int(f.index, 0, n - 1) !== null ? (int(f.time, 1, 2000) ? { index: f.index, time: f.time } : f.index) : null)).filter((f) => f !== null);
+    if (frames.length) out.frames = frames;
+  }
+  return out;
+}
+
 /** Anzeigename: thema.json -> Beschreibung "Thema: X" -> Ordnername */
 function themeDisplayName(dir, fallback) {
   try { const j = JSON.parse(fs.readFileSync(path.join(dir, 'thema.json'), 'utf8')); if (j?.name) return String(j.name); } catch { /* optional */ }
@@ -315,7 +335,11 @@ export class Store {
   }
 
   /** Speichert eine Textur ins Thema (und auf Wunsch zusaetzlich in einen Arbeitsordner, siehe #mirror). */
-  save(themeKeyName, rel, img) {
+  /**
+   * anim: undefined = Animation wie bisher (aus Thema/Original mitnehmen),
+   *       null = Animation entfernen, { frametime, interpolate, height?, frames? } = neue Animation.
+   */
+  save(themeKeyName, rel, img, anim) {
     rel = safeRel(rel);
     const t = this.theme(themeKeyName);
     if (!t) throw new Error('Im Thema "Normal" kann nichts gespeichert werden. Bitte ein Thema wählen.');
@@ -329,7 +353,13 @@ export class Store {
     const prev = this.effectiveBytes(themeKeyName, rel);
     if (prev) { try { oldW = decodePng(prev.bytes).width; } catch { oldW = null; } }
     if (!meta) meta = this.vanillaMcmeta(rel);
-    if (meta && oldW && img.width !== oldW && meta.animation) {
+    if (anim !== undefined) {
+      // Animation aus dem Animations-Werkzeug: nur den "animation"-Teil ersetzen, Rest (z. B. GUI-Raster) bleibt
+      meta = meta ? { ...meta } : {};
+      if (anim === null) delete meta.animation;
+      else meta.animation = cleanAnimation(anim, img);
+      if (!Object.keys(meta).length) meta = null;
+    } else if (meta && oldW && img.width !== oldW && meta.animation) {
       const f = img.width / oldW;
       for (const k of ['width', 'height']) if (typeof meta.animation[k] === 'number') meta.animation[k] = Math.round(meta.animation[k] * f);
     }
@@ -338,6 +368,7 @@ export class Store {
     fs.writeFileSync(file, png);
     const metaText = meta ? JSON.stringify(meta, null, 2) + '\n' : null;
     if (metaText) fs.writeFileSync(file + '.mcmeta', metaText, 'utf8');
+    else if (fs.existsSync(file + '.mcmeta')) fs.rmSync(file + '.mcmeta'); // Animation entfernt
     this.#mirror(t, rel, png, metaText);
     return { bytes: png.length };
   }

@@ -60,7 +60,7 @@ export class PixelEditor {
 
   changed() { this.updateImage(); this.render(); this.hooks.onChange?.(); }
 
-  snapshot() { const d = this.doc; return { w: d.w, h: d.h, data: d.data.slice() }; }
+  snapshot() { const d = this.doc; return { w: d.w, h: d.h, data: d.data.slice(), frameH: d.frameH, anim: d.anim ? structuredClone(d.anim) : d.anim }; }
 
   pushUndo() {
     const d = this.doc;
@@ -79,6 +79,7 @@ export class PixelEditor {
     Object.assign(this.doc, s);
     if (sizeChanged) { this.sel = null; this.fit(); }
     this.changed();
+    this.hooks.onRestore?.();
   }
 
   replaceAll(w, h, data) {
@@ -124,6 +125,22 @@ export class PixelEditor {
 
   setGrid(on) { this.showGrid = on; this.render(); }
 
+  /** Animation: dieses Einzelbild markieren und ins Bild holen (null = keins). */
+  focusFrame(i, zoomIn = true) {
+    const d = this.doc;
+    this.activeFrame = i;
+    if (!d || i == null || !d.frameH || d.frameH >= d.h) { this.render(); return; }
+    const fh = d.frameH;
+    if (zoomIn) {
+      const z = Math.min((this.cw - 60) / d.w, (this.ch - 60) / fh);
+      this.zoom = z >= 1 ? Math.max(1, Math.min(64, Math.floor(z))) : Math.max(0.25, z);
+      this.ox = Math.round((this.cw - d.w * this.zoom) / 2);
+    }
+    this.oy = Math.round(this.ch / 2 - (i * fh + fh / 2) * this.zoom);
+    this.render();
+    this.hooks.onZoom?.(this.zoom);
+  }
+
   highlight(indices, ms = 4000) {
     this.highlightSet = indices;
     this.highlightUntil = performance.now() + ms;
@@ -160,6 +177,14 @@ export class PixelEditor {
       for (let x = vx0 - (vx0 % 16); x <= vx1; x += 16) { const X = Math.round(this.ox + x * z) + 0.5; c.moveTo(X, this.oy + vy0 * z); c.lineTo(X, this.oy + vy1 * z); }
       for (let y = vy0 - (vy0 % 16); y <= vy1; y += 16) { const Y = Math.round(this.oy + y * z) + 0.5; c.moveTo(this.ox + vx0 * z, Y); c.lineTo(this.ox + vx1 * z, Y); }
       c.stroke();
+    }
+    if (d.frameH && d.frameH < d.h && this.activeFrame != null && this.activeFrame * d.frameH < d.h) {
+      const fy = this.oy + this.activeFrame * d.frameH * z, fhz = d.frameH * z;
+      c.fillStyle = 'rgba(10,6,30,0.45)';
+      if (fy > this.oy) c.fillRect(this.ox, this.oy, W, fy - this.oy);
+      if (fy + fhz < this.oy + H) c.fillRect(this.ox, fy + fhz, W, this.oy + H - fy - fhz);
+      c.strokeStyle = '#ffe14d'; c.lineWidth = 3; c.setLineDash([]);
+      c.strokeRect(this.ox - 1.5, fy - 1.5, W + 3, fhz + 3);
     }
     if (d.frameH && d.frameH < d.h) {
       c.strokeStyle = 'rgba(60,200,255,0.75)'; c.setLineDash([6, 4]); c.lineWidth = 2;
