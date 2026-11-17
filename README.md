@@ -1,7 +1,7 @@
 # Minecraft Texturen
 
 Ein einfaches, buntes Malprogramm nur für Minecraft-Texturen – für eigene **Themen** (Ressourcenpakete),
-die man im Spiel mit **`/thema <name>`** umschaltet. Für Windows.
+die man im Spiel mit **`/thema <name>`** umschaltet. Für **Windows und Mac**.
 
 - Funktioniert mit **CurseForge**, **Modrinth App**, **Lunar Client** und dem **Minecraft Launcher** –
   das Programm findet die Profile von selbst.
@@ -9,6 +9,9 @@ die man im Spiel mit **`/thema <name>`** umschaltet. Für Windows.
   genau dieser Version (fehlt sie, lädt das Programm sie auf Knopfdruck von Mojang).
 - **Online-Konto** mit Benutzername und Passwort: eigene Themen auf jedem PC, Themen von anderen finden und
   mit einem Klick installieren.
+- **Eingebaute Textur-KI** (ohne Internet, kostenlos): „Spider-Man als Kupferrüstung“, „blaues Feuerschwert“,
+  „Galaxie-Hotbar“ – oder ein Bild hineinziehen. Sie malt die Texturen und zeigt dir am Ende ein Bild.
+- **Animations-Werkzeug** mit Effekt-Assistent (Lauflicht, Welle, Leuchten, Regenbogen …) – z. B. für eine leuchtende XP-Leiste.
 - Es gibt **keine fertigen Themen** – du malst deine eigenen. 🎨
 
 > Kein offizielles Minecraft-Produkt. Nicht von Mojang oder Microsoft genehmigt oder mit ihnen verbunden.
@@ -16,11 +19,19 @@ die man im Spiel mit **`/thema <name>`** umschaltet. Für Windows.
 
 ## Herunterladen und starten
 
-1. Unter **[Releases](../../releases)** die Datei `MinecraftTexturen-<Version>-Windows.zip` laden.
-2. Entpacken und **`Minecraft Texturen.exe`** starten. (Windows warnt evtl. „Unbekannter Herausgeber“ →
-   „Weitere Informationen“ → „Trotzdem ausführen“.) Node.js ist schon dabei – nichts installieren.
-3. Thema anlegen → Textur wählen → malen → **Speichern** → Profil wählen. Fertig.
-4. Im Spiel: `/thema <name>` bzw. `/thema normal` (Minecraft-Original).
+**Windows:** Unter **[Releases](../../releases)** `MinecraftTexturen-<Version>-Windows.zip` laden, entpacken und
+**`Minecraft Texturen.exe`** starten. (Windows warnt evtl. „Unbekannter Herausgeber“ → „Weitere Informationen“ →
+„Trotzdem ausführen“.)
+
+**Mac** (macOS 13.5 oder neuer, Apple-Chip und Intel): `MinecraftTexturen-<Version>-Mac.zip` laden, entpacken,
+**`Minecraft Texturen.app`** in „Programme“ ziehen und öffnen. Beim ersten Start blockt macOS das (nicht bei Apple
+registriert): Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“. Das Fenster öffnet sich in Chrome,
+Edge oder Brave, sonst im normalen Browser.
+
+Node.js ist jeweils schon dabei – nichts installieren.
+
+1. Thema anlegen → Textur wählen → malen (oder **🤖 KI** fragen) → **Speichern** → Profil wählen. Fertig.
+2. Im Spiel: `/thema <name>` bzw. `/thema normal` (Minecraft-Original).
 
 ## Was das Programm kann
 
@@ -36,6 +47,17 @@ die man im Spiel mit **`/thema <name>`** umschaltet. Für Windows.
 - **Mehr Pixel**: Auflösung verdoppeln/vervierfachen (z. B. für Bossleisten); Animationen wachsen mit.
 - **Hinweise** unten links (abschaltbar): fast unsichtbare Restpixel, falsche Größe, Durchsichtigkeit …
 - **Viele Texturen, einmal speichern**: bearbeitete Texturen bleiben Entwurf, „Alles speichern“ speichert alle.
+- **🎬 Animation**: Einzelbilder (doppeln, verschieben, löschen), Takt in Ticks, weich überblenden, Vorschau wie im Spiel,
+  Effekt-Assistent und eine Hilfe, was in Minecraft animierbar ist.
+
+## Textur-KI 🤖
+
+Oben auf **🤖 KI**, dann beschreiben, was du willst – die KI versteht Figuren (Spider-Man, Batman, Iron Man, Creeper,
+Pikachu, Ninja …), Stile (Feuer, Eis, Lava, Galaxie, Neon, Regenbogen, Tarnung …), Farben, Muster (Streifen, Sterne,
+Netz …) und Ziele (z. B. „als Kupferrüstung“, Schwert, Werkzeuge, Hotbar, Herzen, XP-Leiste, Blöcke). Sie läuft komplett
+auf deinem PC: Form und Schattierung kommen aus der Original-Textur, Farben, Muster, Gesichter und Embleme aus dem Stil.
+Mit einem **Bild als Vorlage** nimmt sie dessen Farben, druckt das Motiv auf oder macht ein ganzes Pixelbild daraus.
+Am Ende siehst du den Spieler mit der Rüstung von vorne und hinten – „Andere Variante“, „Verwerfen“ oder behalten.
 
 ## Der Befehl `/thema`
 
@@ -86,8 +108,8 @@ mod/               Mod „Themenwechsel“ (Java, ohne Gradle gebaut)
 docs/              Online-Speicher einrichten
 ```
 
-- Start: `cd editor` → `node --no-warnings server.mjs --app` (Node.js ≥ 22.13)
-- Selbsttest: `node --no-warnings tools/selbsttest.mjs`
+- Start: `cd editor` → `node --no-warnings server.mjs --app` (Node.js ≥ 22.13; Windows, Mac, Linux)
+- Selbsttest: `node --no-warnings tools/selbsttest.mjs`, außerdem `tools/zip-test.mjs` und `tools/plattform-test.mjs` (Mac-Ordner simuliert)
 - Testserver gegen Kopien aller Profile + Supabase-Nachbau: `node --no-warnings tools/testserver.mjs --neu` (Port 47812)
 - Mods bauen: `node mod/tools/baue-alle.mjs` (braucht die jeweiligen Minecraft-Versionen lokal installiert);
   Tests: `mod/test.ps1`, `mod/test-alle.ps1`

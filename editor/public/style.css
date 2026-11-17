@@ -351,3 +351,28 @@ input[type=range] { accent-color: var(--violet); width: 100%; }
 .help { max-height: 60vh; overflow: auto; font-size: 14px; line-height: 1.5; }
 .help h3 { margin: 12px 0 4px; }
 .help ol, .help ul { margin: 4px 0; padding-left: 22px; }
+
+/* Textur-KI */
+.ki-btn { background: linear-gradient(90deg, rgba(255,79,216,.25), rgba(60,200,255,.25)); border-color: rgba(255,79,216,.5); }
+.muted.small { font-size: 12px; font-weight: 600; }
+#kiText { width: 100%; resize: vertical; background: rgba(0,0,0,.25); border: 1px solid var(--line); color: var(--text); border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 15px; }
+.ki-ideas { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; font-size: 13px; }
+.chip { border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--text); border-radius: 999px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.chip:hover { border-color: var(--pink); }
+.ki-image { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 13px; }
+.ki-thumb { width: 36px; height: 36px; object-fit: contain; border-radius: 6px; vertical-align: middle; background: rgba(255,255,255,.06); }
+.ki-sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: middle; margin-left: 2px; border: 1px solid rgba(255,255,255,.25); }
+.ki-where { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; margin: 8px 0; }
+.ki-where select { max-width: 100%; }
+.ki-plan { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; background: rgba(0,0,0,.22); border: 1px solid var(--line); font-size: 13.5px; min-height: 40px; }
+.ki-miss { color: #ffb347; }
+.ki-note { color: var(--muted); }
+.modal.drop { outline: 3px dashed var(--pink); outline-offset: -8px; }
+.ki-result { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin: 10px 0; }
+.ki-player { margin: 0; display: grid; justify-items: center; gap: 4px; padding: 10px; border-radius: 14px; border: 1px solid var(--line);
+  background: repeating-conic-gradient(#2a2546 0% 25%, #221d3b 0% 50%) 0 0 / 16px 16px; }
+.ki-player canvas, .ki-grid canvas { image-rendering: pixelated; }
+.ki-grid { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; min-width: 200px; }
+.ki-grid figure, .ki-player figcaption { margin: 0; }
+.ki-grid figure { display: grid; justify-items: center; gap: 2px; padding: 6px; border-radius: 10px; border: 1px solid var(--line); background: repeating-conic-gradient(#2a2546 0% 25%, #221d3b 0% 50%) 0 0 / 10px 10px; }
+.ki-grid figcaption, .ki-player figcaption { font-size: 11px; color: var(--muted); max-width: 110px; text-align: center; }
