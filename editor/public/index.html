@@ -17,20 +17,20 @@
       </div>
     </div>
     <nav class="apptabs" aria-label="Bereiche">
-      <button class="apptab active">🧱 Minecraft Texturen</button>
-      <button class="apptab soon" disabled title="Hier kommen später noch andere Sachen dazu">🚀 Bald mehr …</button>
+      <button id="textureTab" class="apptab active" aria-pressed="true">🧱 Minecraft Texturen</button>
+      <button id="skinTab" class="apptab" aria-pressed="false">👤 Skins</button>
     </nav>
     <div class="top-actions">
-      <div class="profile-picker">
+      <div class="profile-picker texture-only">
         <button id="profileBtn" class="pill" aria-haspopup="true" title="Minecraft-Profil"><span>🎮</span><span id="profileName">…</span><span class="caret">▾</span></button>
         <div id="profileMenu" class="menu" hidden></div>
       </div>
-      <div class="theme-picker">
+      <div class="theme-picker texture-only">
         <button id="themeBtn" class="pill theme-btn" aria-haspopup="true"><span class="dot"></span><span id="themeName">…</span><span class="caret">▾</span></button>
         <div id="themeMenu" class="menu" hidden></div>
       </div>
       <button id="kiBtn" class="pill ki-btn" title="Textur-KI: beschreib, was du willst – sie malt es (ohne Internet)"><span>🤖</span><span>KI</span></button>
-      <button id="kontoBtn" class="pill konto-btn" title="Online-Konto: Themen auf jedem PC und von anderen"><span>👤</span><span id="kontoName">Anmelden</span></button>
+      <button id="kontoBtn" class="pill konto-btn texture-only" title="Online-Konto: Themen auf jedem PC und von anderen"><span>👤</span><span id="kontoName">Anmelden</span></button>
       <button id="saveBtn" class="btn save" disabled title="Speichern (Strg+S)">💾 Speichern</button>
       <button id="settingsBtn" class="iconbtn" title="Einstellungen">⚙️</button>
     </div>
@@ -38,7 +38,7 @@
 
   <main class="layout">
     <!-- Texturen-Auswahl -->
-    <aside class="panel browser">
+    <aside class="panel browser texture-only">
       <div class="search">
         <span>🔎</span>
         <input id="search" type="search" placeholder="Textur suchen, z. B. diamond" autocomplete="off">
@@ -46,6 +46,28 @@
       <div id="cats" class="cats"></div>
       <div id="grid" class="grid" tabindex="-1"></div>
       <div id="gridCount" class="grid-count"></div>
+    </aside>
+
+    <aside id="skinPanel" class="panel browser skin-panel" hidden>
+      <section class="card skin-controls">
+        <h3>👤 Eigener Skin</h3>
+        <label>Skin-Name<input id="skinName" type="text" maxlength="64" value="Mein Skin"></label>
+        <label>Spielermodell<select id="skinModel"><option value="classic">Classic · breite Arme</option><option value="slim">Slim · schmale Arme</option></select></label>
+        <button id="skinNew" class="btn">🖌️ Leerer Skin</button>
+        <button id="skinImport" class="btn">📂 PNG öffnen</button>
+        <input id="skinFile" type="file" accept="image/png,.png" hidden>
+        <button id="skinGenerate" class="btn primary">✨ Mit KI erstellen</button>
+      </section>
+      <section class="card skin-controls">
+        <h3>▦ Malhilfe</h3>
+        <label class="skin-check"><input id="skinGuides" type="checkbox" checked> Körperflächen markieren</label>
+        <div class="skin-legend"><span class="skin-head">Kopf</span><span class="skin-body">Körper</span><span class="skin-arm">Arme</span><span class="skin-leg">Beine</span></div>
+        <p class="hint">Auf der zweiten Ebene malst du z. B. Haare, eine Jacke oder einen Hut über die Grundform.</p>
+      </section>
+      <section class="card">
+        <h3>🎮 Im Java Launcher</h3>
+        <p class="hint">PNG exportieren. Im Launcher unter <b>Java Edition → Skins → Neuer Skin</b> die Datei und dasselbe Modell wählen.</p>
+      </section>
     </aside>
 
     <!-- Malfläche -->
@@ -70,9 +92,10 @@
             <button id="imageBtn" class="btn small" title="Spiegeln, drehen, umfärben …">🧰 Bild ▾</button>
             <div id="imageMenu" class="menu" hidden></div>
           </div>
+          <button id="referenceBtn" class="btn small" title="Ein halbtransparentes Bild zum Abpausen auflegen" disabled>📎 Vorlage</button>
           <button id="animBtn" class="btn small anim" title="Animation: Einzelbilder, Takt, Effekte (z. B. leuchtende XP-Leiste)">🎬 Animation</button>
-          <button id="growBtn" class="btn small grow" title="Mehr Pixel zum Malen">✨ Mehr Pixel</button>
-          <button id="revertBtn" class="btn small ghost" title="Zurück zum Minecraft-Original">♻️ Original</button>
+          <button id="growBtn" class="btn small grow texture-only" title="Mehr Pixel zum Malen">✨ Mehr Pixel</button>
+          <button id="revertBtn" class="btn small ghost texture-only" title="Zurück zum Minecraft-Original">♻️ Original</button>
         </div>
       </div>
       <div class="stage-body">
@@ -129,6 +152,7 @@
       <section class="card view3d-card" id="view3dCard">
         <h3>🧊 3D-Ansicht <select id="modelSelect" title="Modell"></select></h3>
         <div id="view3d" class="view3d"><div class="view3d-empty">Für Blöcke und Mobs gibt es hier eine 3D-Ansicht.</div></div>
+        <canvas id="skinFallback" class="skin-fallback" width="16" height="32" aria-label="Skin-Vorschau von vorne" hidden></canvas>
       </section>
     </aside>
   </main>

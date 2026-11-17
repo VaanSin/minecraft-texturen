@@ -69,8 +69,21 @@ Oben auf **🤖 KI**, dann beschreiben, was du willst. Die KI läuft komplett au
   und Pixelbilder werden dann wirklich feiner gemalt (große Bilder mit Wolken, Gras und Licht auf dem Motiv).
 - **Bild als Vorlage**: Hintergrund wird freigestellt, das Motiv zugeschnitten und als Farben, Aufdruck oder ganzes
   Pixelbild verwendet.
-- **Lässt sich Zeit**: Sie malt 6 Entwürfe, bewertet sie (Kontrast, Lesbarkeit, Sauberkeit) und zeigt dir die besten
-  drei – animierte laufen live, Rüstungen am Spieler von vorne und hinten.
+- **Verschiedene Entwürfe**: Die KI probiert aus, wie Akzentkanten, Farbverläufe und unterschiedliche Farbflächen wirken.
+  Aus sechs Versuchen zeigt sie bis zu drei sichtbar verschiedene Varianten.
+
+## Eigene Java-Skins
+
+- **👤 Skins** öffnen und auf einer leeren Vorlage malen, ein Skin-PNG öffnen oder **Mit KI erstellen** wählen.
+  Probier zum Beispiel „blauer Hoodie mit Stern“. Der Skin-Generator läuft lokal und funktioniert auch ohne Minecraft-Profil.
+- **Classic** oder **Slim** wählen. Die farbigen Linien zeigen die Körperflächen und die zweite Ebene für Haare, Kleidung und Zubehör.
+  Die 3D-Ansicht zeigt den Skin beim Malen.
+- Mit **📎 Vorlage** kannst du bei Skins und Texturen ein eigenes Bild einblenden und Position, Größe und Deckkraft einstellen.
+  Die Vorlage ist eine Malhilfe und wird aus dem Export weggelassen.
+- Unter **🎬 Animation** lassen sich Einzelbilder bearbeiten, in 3D abspielen und als Sprite-Sheet exportieren.
+  Mit **Skin-PNG** speicherst du das gewählte Einzelbild als 64×64-PNG.
+  Im **Minecraft Launcher → Java Edition → Skins → Neuer Skin** das passende Modell und die PNG-Datei wählen.
+  Der Java-Launcher unterstützt für eigene Skins statische PNGs.
 
 ## Der Befehl `/thema`
 

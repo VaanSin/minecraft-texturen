@@ -119,6 +119,27 @@ export class Viewer3D {
     this.#rebuild();
   }
 
+  async showSkin(model, canvas) {
+    const path = Symbol('skin');
+    this.path = path;
+    this.select.hidden = true;
+    await models();
+    if (this.path !== path) return;
+    this.mode = 'skin';
+    this.canvas = canvas;
+    this.doc = { w: 64, h: 64 };
+    const key = model === 'slim' ? 'minecraft:player_slim#main' : 'minecraft:player#main';
+    this.select.value = '';
+    this.#rebuild([key]);
+  }
+
+  hide() {
+    this.path = null;
+    this.mode = null;
+    this.select.hidden = true;
+    this.#rebuild();
+  }
+
   /** Textur wurde bemalt */
   update() {
     if (!this.mode || !this.texture) return;
@@ -140,7 +161,7 @@ export class Viewer3D {
 
   #rebuild(keys) {
     this.currentKeys = keys;
-    const hasModel = this.mode === 'block' || this.mode === 'item' || (this.mode === 'entity' && keys?.length);
+    const hasModel = this.mode === 'block' || this.mode === 'item' || ((this.mode === 'entity' || this.mode === 'skin') && keys?.length);
     this.empty.style.display = hasModel ? 'none' : 'grid';
     this.empty.textContent = this.mode === 'entity' ? 'Für diese Textur gibt es kein passendes Modell. Oben kannst du eins aussuchen.' : 'Für diese Textur gibt es keine 3D-Ansicht – nur für Blöcke, Items und Mobs.';
     if (!hasModel) { this.#clear(); if (this.renderer) this.renderer.domElement.style.visibility = 'hidden'; return; }

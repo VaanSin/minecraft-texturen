@@ -5,6 +5,7 @@
 import { hsl, fromHsl } from './colors.js';
 import { MOTIV_WORDS, MOTIVE, motivPixels } from './ki-motive.js';
 import { makeEffect, canAnimate } from './animation.js';
+import { SKIN_SIZE, skinFaces } from './skin.js';
 
 // ---------- Hilfen ----------
 export const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
@@ -66,6 +67,9 @@ export const STYLES = [
   { id: 'enderman', name: 'Enderman', words: ['enderman', 'ender man', 'ender'], colors: { main: '#161616', second: '#262626', line: '#0A0A0A', light: '#CC33FF' }, face: 'ender', suit: true },
   { id: 'zombie', name: 'Zombie', words: ['zombie', 'zombi', 'untoter'], colors: { main: '#1E8C8C', second: '#3B3F99', line: '#14202A', light: '#5A8A3A' }, armor: { head: 'light', arms: 'light', legs: 'second', belt: 'second', boots: 'line' }, face: 'zombie', suit: true },
   { id: 'skelett', name: 'Skelett', words: ['skelett', 'skeleton', 'knochen', 'gerippe'], colors: { main: '#D6D6D6', second: '#A8A8A8', line: '#3A3A3A', light: '#F5F5F5' }, pattern: { kind: 'ribs', color: 'line', on: ['body'] }, face: 'skull', suit: true },
+  { id: 'hoodie', name: 'Hoodie', words: ['hoodie', 'kapuzenpulli', 'kapuzenpullover', 'pulli', 'pullover'], colors: { main: '#6650AD', second: '#34344C', line: '#25233A', light: '#DFD2FF' } },
+  { id: 'magier', name: 'Magier', words: ['magier', 'magierin', 'zauberer', 'hexe', 'mage', 'wizard'], colors: { main: '#523697', second: '#CAA04C', line: '#241B48', light: '#FBEAB8' }, emblem: 'star' },
+  { id: 'abenteurer', name: 'Abenteurer', words: ['abenteurer', 'abenteurerin', 'explorer', 'waldlaeufer', 'ranger'], colors: { main: '#467765', second: '#8C6240', line: '#2E3340', light: '#EBC789' } },
   { id: 'ninja', name: 'Ninja', words: ['ninja', 'schattenkrieger'], colors: { main: '#1A1A1E', second: '#B01818', line: '#0A0A0C', light: '#F5F5F5' }, armor: { belt: 'second' }, face: 'ninja', suit: true },
   { id: 'pirat', name: 'Pirat', words: ['pirat', 'pirate', 'piraten', 'seeraeuber'], colors: { main: '#8B1A1A', second: '#2B1A0E', line: '#140A04', light: '#E8C060' }, armor: { legs: 'second', belt: 'light', boots: 'second' }, emblem: 'skull', pattern: { kind: 'buttons', color: 'light', on: ['body'] } },
   { id: 'ritter', name: 'Ritter', words: ['ritter', 'knight', 'paladin', 'krieger'], colors: { main: '#B8BCC4', second: '#2E4FA0', line: '#3A3E46', light: '#E8ECF2' }, armor: { belt: 'second' }, emblem: 'cross', pattern: { kind: 'panels', color: 'line', on: ['body', 'arms', 'legs'] } },
@@ -583,6 +587,27 @@ function legendColor(ch, st) {
 }
 
 // ---------- Malen ----------
+const DRAFT_LOOKS = [
+  { name: 'Klassisch', kind: 'classic', amount: 0, light: 0 },
+  { name: 'Kontrastkanten', kind: 'edge', amount: 0.77, light: -0.08 },
+  { name: 'Farbverlauf', kind: 'gradient', amount: 0.72, light: 0.09 },
+  { name: 'Diagonale Akzente', kind: 'diagonal', amount: 0.72, light: 0.02 },
+  { name: 'Licht von oben', kind: 'top', amount: 0.56, light: 0.12 },
+  { name: 'Farbblöcke', kind: 'blocks', amount: 0.82, light: -0.02 },
+];
+
+function draftAccent(look, x, y, w, h, edge) {
+  const u = (x + 0.5) / w, v = (y + 0.5) / h;
+  switch (look.kind) {
+    case 'edge': return edge ? look.amount : 0;
+    case 'gradient': return Math.floor(v * 4) / 3 * look.amount;
+    case 'diagonal': return Math.abs(u + v - 1) < 0.22 ? look.amount : 0;
+    case 'top': return v < 0.35 ? look.amount : 0;
+    case 'blocks': return (v > 0.7 || (u < 0.32 && v < 0.38)) ? look.amount : 0;
+    default: return 0;
+  }
+}
+
 function colorsOf(style) {
   const c = {};
   for (const k of ['main', 'second', 'line', 'light']) c[k] = hex(style.colors[k] || style.colors.main);
@@ -596,7 +621,7 @@ function colorsOf(style) {
  */
 export function render(plan, sources, handle = new Set(), opts = {}) {
   const style = plan.style, seed = opts.seed || 1, variant = opts.variant || 0;
-  const st = colorsOf(style);
+  const st = colorsOf(style), look = opts.look || DRAFT_LOOKS[0];
   const out = [];
   for (const path of plan.targets) {
     const orig = sources.get(path);
@@ -611,13 +636,13 @@ export function render(plan, sources, handle = new Set(), opts = {}) {
       const s = src.w / 64;
       const motif = opts.image?.mode === 'motif' && opts.image.source ? pixelate(opts.image.source, 8 * s, 8 * s, opts.image.paletteColors?.slice(0, 8), { outline: false })
         : libMotif ? fitMotif(libMotif, 8 * s, 8 * s) : null;
-      data = paintArmor(src, style, st, { leggings: isLeggingsLayer(path), pieces: plan.pieces || ['helmet', 'chestplate', 'leggings', 'boots'], seed, motif, variant });
+      data = paintArmor(src, style, st, { leggings: isLeggingsLayer(path), pieces: plan.pieces || ['helmet', 'chestplate', 'leggings', 'boots'], seed, motif, variant, look });
     } else if (plan.picture && opts.image?.mode !== 'pixel') {
-      data = paintPicture(src, style, st, { motif: plan.motif, seed });
+      data = paintPicture(src, style, st, { motif: plan.motif, seed, look });
     } else {
       const armorIcon = /_(helmet|chestplate|leggings|boots)\.png$/.test(path) && plan.pieces; // Motiv nur auf der Brust, nicht auf den kleinen Symbolen
       const motif16 = opts.image?.mode === 'motif' ? (f > 1 && opts.image.source ? pixelate(opts.image.source, 16 * f, 16 * f, opts.image.paletteColors?.slice(0, 8), { outline: true }) : opts.image.motif16) : null;
-      data = paintGeneric(src, style, st, { kind, handle, seed, variant, motif: motif16, libMotif: armorIcon ? null : libMotif, pixelart: opts.image?.mode === 'pixel' ? opts.image : null });
+      data = paintGeneric(src, style, st, { kind, handle, seed, variant, look, motif: motif16, libMotif: armorIcon ? null : libMotif, pixelart: opts.image?.mode === 'pixel' ? opts.image : null });
     }
     refine(data, src.w, src.h, style.pattern?.kind);
     const res = { path, w: src.w, h: src.h, data };
@@ -690,7 +715,7 @@ function finish(c, style, x, y, t, seed) {
   return c;
 }
 
-function paintArmor(src, style, st, { leggings, pieces, seed, motif, variant }) {
+function paintArmor(src, style, st, { leggings, pieces, seed, motif, variant, look }) {
   const { w, h } = src, s = w / 64, out = new Uint8ClampedArray(src.data);
   const allowed = new Set(pieces.flatMap((p) => PIECE_ROLES[p]));
   const [lo, hi] = lumRange(src.data);
@@ -727,6 +752,11 @@ function paintArmor(src, style, st, { leggings, pieces, seed, motif, variant }) 
       const scaleF = s >= 2 ? Math.floor(s) : 1;
       if (pat.kind === 'edges') { if (isEdge(src.data, w, h, x, y)) c = st[pat.color]; }
       else if (patternAt(pat.kind, x - Math.round(f.ox * s), y - Math.round(f.oy * s), f.fw * scaleF, f.fh * scaleF, seed, x, y)) c = pat.color === 'second' || pat.color === 'light' ? pick(ramp(st[pat.color]), 0.3 + t * 0.6) : mixC(c, st[pat.color], 0.8);
+    }
+    if (look.amount && !free(Math.floor(x / s), Math.floor(y / s))) {
+      const edge = look.kind === 'edge' && isEdge(src.data, w, h, x, y);
+      const a = draftAccent(look, f.fx, f.fy, f.fw, f.fh, edge);
+      c = mixC(shade(c, look.light), st[look.kind === 'top' ? 'light' : role === 'head' ? 'line' : 'second'], a);
     }
     c = finish(c, style, x, y, t, seed);
     out[i] = c[0]; out[i + 1] = c[1]; out[i + 2] = c[2]; out[i + 3] = 255;
@@ -788,9 +818,9 @@ export function fitMotif(m, maxW, maxH) {
   return { w, h, data };
 }
 
-function paintGeneric(src, style, st, { kind, handle, seed, variant, motif, libMotif, pixelart }) {
+function paintGeneric(src, style, st, { kind, handle, seed, variant, look, motif, libMotif, pixelart }) {
   const { w, h } = src, out = new Uint8ClampedArray(src.data);
-  if (pixelart) return pixelArtInto(src, pixelart);
+  if (pixelart) return pixelArtInto(src, pixelart, look);
   const isHandle = (i) => kind === 'item' && handle.has(`${src.data[i]},${src.data[i + 1]},${src.data[i + 2]}`);
   const [lo, hi] = lumRange(src.data, isHandle);
   const rMain = ramp(st.main), rSecond = ramp(st.second);
@@ -810,6 +840,12 @@ function paintGeneric(src, style, st, { kind, handle, seed, variant, motif, libM
     if (pat && (pat.on?.includes(kind) || kind === 'other' || kind === 'painting')) {
       if (pat.kind === 'edges') { if (isEdge(src.data, w, h, x, y)) c = st[pat.color]; }
       else if (patternAt(pat.kind, x % w, y % fh, w, fh, seed)) c = pat.color === 'line' ? mixC(c, st.line, 0.75) : pick(ramp(st[pat.color]), 0.3 + t * 0.6);
+    }
+    if (look.amount) {
+      const edge = look.kind === 'edge' && (isEdge(src.data, w, h, x, y) || x === 0 || y % fh === 0);
+      const a = draftAccent(look, x, y % fh, w, fh, edge);
+      const accentColor = look.kind === 'edge' ? st.line : look.kind === 'top' ? st.light : pick(rSecond, 0.25 + t * 0.75);
+      c = mixC(shade(c, look.light), accentColor, a);
     }
     if (motif) {
       const mx = Math.floor((x / w) * motif.w), my = Math.floor(((y % fh) / fh) * motif.h), j = (my * motif.w + mx) * 4;
@@ -853,7 +889,7 @@ function pasteMotif(out, w, m, ox, oy) {
 // ---------- Pixelbilder aus Worten ----------
 const NIGHT_MOTIFS = new Set(['mond', 'stern', 'geist', 'fledermaus', 'rakete', 'schneeflocke']);
 const GROUND_MOTIFS = new Set(['baum', 'pilz', 'blume', 'katze', 'kuerbis', 'drache', 'creeper']);
-function paintPicture(src, style, st, { motif, seed }) {
+function paintPicture(src, style, st, { motif, seed, look }) {
   const { w, h } = src, fh = Math.min(w, h), out = new Uint8ClampedArray(w * h * 4);
   const night = NIGHT_MOTIFS.has(motif) || style.id === 'galaxie' || style.id === 'schatten';
   const top = night ? hex('#0E1030') : style.keepColors ? hex('#6FC0FF') : hex(style.colors.light);
@@ -865,6 +901,11 @@ function paintPicture(src, style, st, { motif, seed }) {
     // Himmel in Stufen (Pixel-Art statt weichem Verlauf)
     const band = Math.floor((y / fh) * 5) / 4;
     let c = mixC(top, bottom, band);
+    if (look.amount) {
+      const edge = x < w * 0.1 || x >= w * 0.9 || y < fh * 0.1 || y >= fh * 0.9;
+      const a = draftAccent(look, x, y, w, fh, edge);
+      c = mixC(shade(c, look.light), st[look.kind === 'edge' ? 'line' : 'second'], a * 0.75);
+    }
     if (night && hash2(x, y, seed + 41) < 0.05) c = [255, 255, 230];
     if (!night && style.pattern && patternAt(style.pattern.kind, x, y, w, fh, seed)) c = mixC(c, st[style.pattern.color] || st.line, 0.5);
     if (ground && y >= fh - ground) {
@@ -874,11 +915,12 @@ function paintPicture(src, style, st, { motif, seed }) {
     pic[i] = c[0]; pic[i + 1] = c[1]; pic[i + 2] = c[2]; pic[i + 3] = 255;
   }
   if (motif && MOTIVE[motif]) {
-    const base = motivPixels(motif, 9);
-    const sc = Math.max(1, Math.floor((Math.min(w, fh) * 0.75) / 9));
+    const motifScale = { edge: 0.85, gradient: 0.55, diagonal: 0.70, top: 0.62, blocks: 0.8 }[look.kind] || 0.75;
+    const sc = Math.max(1, Math.floor((Math.min(w, fh) * motifScale) / 9));
     const big = motivPixels(motif, 9 * sc);
     const m = fitMotif(big, w - 2, fh - ground - 1);
-    const ox = Math.floor((w - m.w) / 2), oy = ground ? fh - ground - m.h + Math.min(1, ground) : Math.floor((fh - m.h) / 2);
+    const ox = Math.floor((w - m.w) * (look.kind === 'diagonal' ? 0.2 : look.kind === 'blocks' ? 0.8 : 0.5));
+    const oy = ground ? fh - ground - m.h + Math.min(1, ground) : Math.floor((fh - m.h) * (look.kind === 'top' ? 0.2 : 0.5));
     // Schatten
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) {
       if (m.data[(y * m.w + x) * 4 + 3] < 128) continue;
@@ -898,7 +940,6 @@ function paintPicture(src, style, st, { motif, seed }) {
         pic[i] = c[0]; pic[i + 1] = c[1]; pic[i + 2] = c[2];
       }
     }
-    void base;
   }
   // grosse Bilder: Wolken am Taghimmel, Grasbueschel auf dem Boden
   if (fh >= 32) {
@@ -1034,11 +1075,127 @@ export async function drafts(plan, sources, handle, opts = {}, count = 6, onStep
   const list = [];
   for (let v = 0; v < count; v++) {
     await onStep(`Entwurf ${v + 1} von ${count} malen …`, (v + 0.5) / count);
-    const results = render(plan, sources, handle, { ...opts, seed: (opts.seed || 1) + v, variant: v % 3 });
+    const look = DRAFT_LOOKS[(v + Math.floor(((opts.seed || 1) - 1) / DRAFT_LOOKS.length)) % DRAFT_LOOKS.length];
+    const results = render(plan, sources, handle, { ...opts, seed: (opts.seed || 1) + v, variant: v % 3, look });
     const score = results.reduce((s, r) => s + scoreImage(r.data, r.w, r.frameH || r.h), 0) / Math.max(1, results.length);
-    list.push({ seed: (opts.seed || 1) + v, variant: v % 3, results, score });
+    list.push({ seed: (opts.seed || 1) + v, look: look.name, results, score });
   }
   return list.sort((a, b) => b.score - a.score);
+}
+
+// Sichtbare Pixel vergleichen, damit die Auswahl auch bei ähnlicher Punktzahl abwechslungsreich ist.
+export function draftDistance(a, b) {
+  let difference = 0, compared = 0;
+  for (let k = 0; k < a.results.length; k++) {
+    const p = a.results[k], q = b.results[k];
+    const h = Math.min(p.frameH || p.h, q.frameH || q.h);
+    const w = Math.min(p.w, q.w);
+    const step = Math.max(1, Math.floor(Math.min(w, h) / 32));
+    for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) {
+      const i = (y * p.w + x) * 4, j = (y * q.w + x) * 4;
+      const pa = p.data[i + 3] / 255, qa = q.data[j + 3] / 255;
+      if (!pa && !qa) continue;
+      const delta = Math.abs(pa - qa) * 255 + [0, 1, 2].reduce((sum, ch) =>
+        sum + Math.abs(p.data[i + ch] - q.data[j + ch]) * Math.min(pa, qa), 0);
+      difference += Math.min(1, delta / 240);
+      compared++;
+    }
+  }
+  return difference / Math.max(1, compared);
+}
+
+export function selectDrafts(sorted, count = 3) {
+  if (!sorted.length) return [];
+  const selected = [sorted[0]], remaining = sorted.slice(1);
+  while (selected.length < count && remaining.length) {
+    let best = -1, merit = -Infinity;
+    remaining.forEach((candidate, i) => {
+      const distance = Math.min(...selected.map((other) => draftDistance(candidate, other)));
+      if (distance < 0.045) return;
+      const value = candidate.score * 0.28 + distance;
+      if (value > merit) { best = i; merit = value; }
+    });
+    if (best < 0) break;
+    selected.push(remaining.splice(best, 1)[0]);
+  }
+  return selected;
+}
+
+const SKIN_LOOKS = [
+  { name: 'Jacke mit Saum', mode: 'jacket' },
+  { name: 'Kontrastärmel', mode: 'sleeves' },
+  { name: 'Schulterpartie mit Gürtel', mode: 'shoulder' },
+];
+
+export function generateSkinDrafts(plan, model, { seed = 1, image = null } = {}) {
+  const style = plan.style;
+  const st = colorsOf(style);
+  const faces = skinFaces(model);
+  const motif = image ? fitMotif(pixelate(image, 8, 7), 8, 7)
+    : plan.motif ? fitMotif(motivPixels(plan.motif, 9), 8, 7) : null;
+  return SKIN_LOOKS.map(({ name, mode }, index) => {
+    const data = new Uint8ClampedArray(SKIN_SIZE * SKIN_SIZE * 4);
+    const variantSeed = seed + index;
+    const armored = style.suit || style.face || ['ritter', 'roboter'].includes(style.id);
+    const skin = hex('#D69B75'), hair = hex('#39263D');
+    const roles = { ...DEFAULT_ROLES, ...style.armor };
+    for (const f of faces) {
+      const { part, layer, face, x, y, w, h } = f;
+      const role = part.endsWith('Arm') ? 'arms' : part.endsWith('Leg') ? 'legs' : part;
+      for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) {
+        const u = (dx + 0.5) / w, v = (dy + 0.5) / h;
+        const chest = role === 'body', head = role === 'head', arm = role === 'arms', leg = role === 'legs';
+        const hairline = head && (face === 'top' || face === 'back' || (face === 'front' ? dy < 2 || (dy < 4 && dx === 0) : dy < 5 && face !== 'bottom'));
+        const cuff = (arm || leg) && v > 0.8;
+        const seam = face !== 'top' && face !== 'bottom' && (u < 0.16 || u > 0.84);
+        const band = (chest || arm) && v < 0.23 && face !== 'bottom';
+        if (layer && !(armored ? (band || cuff || (head && mode === 'shoulder' && (face === 'top' || dy === 0)))
+          : (hairline || (style.id === 'hoodie' && head && face !== 'front' && face !== 'bottom') || band || cuff))) continue;
+
+        let key = roles[role] || 'main';
+        if (mode === 'sleeves' && arm) key = 'second';
+        if (mode === 'sleeves' && chest && v > 0.6) key = 'line';
+        if (mode === 'shoulder' && (band || (chest && v > 0.76))) key = 'second';
+        if (mode === 'jacket' && chest && (dy >= 11 || (face === 'front' && dx === 3))) key = 'line';
+        if (cuff) key = arm && mode === 'sleeves' ? 'light' : leg ? roles.boots : roles.belt;
+        if (leg && mode === 'shoulder' && !cuff) key = 'main';
+        let c = st[key];
+        if (head && !armored) {
+          c = hairline ? hair : skin;
+          if (style.id === 'hoodie' && face !== 'front' && face !== 'bottom') c = st[mode === 'sleeves' ? 'second' : 'main'];
+        }
+        if (style.rainbow && (!head || armored)) c = fromHsl((f.frontY * 9 + dy * 8 + index * 55) % 360, 0.8, 0.54);
+        if (style.pattern && (!head || armored) && style.pattern.on?.includes(role)) {
+          const pat = style.pattern;
+          const marked = pat.kind === 'edges' ? seam || dy === 0 : pat.kind === 'backstripes'
+            ? face === 'back' && dy % 4 === 1 : patternAt(pat.kind, dx, dy, w, h, variantSeed, x + dx, y + dy);
+          if (marked) c = mixC(c, st[pat.color], 0.78);
+        }
+        const light = (face === 'top' ? 0.09 : face === 'front' ? 0.025 : -0.075) + (0.5 - v) * 0.08
+          + (layer ? 0.035 : 0) + (hash2(x + dx, y + dy, variantSeed) - 0.5) * 0.05;
+        data.set([...shade(c, light), 255], ((y + dy) * SKIN_SIZE + x + dx) * 4);
+      }
+    }
+    const frontHead = faces.find((f) => f.part === 'head' && f.face === 'front' && !f.layer);
+    const face = FACES[style.face] || (!armored ? ['........', '........', '........', '.W#..#W.', '........', '...oo...', '........', '........'] : null);
+    if (face) stamp(data, SKIN_SIZE, 1, face, frontHead.x, frontHead.y, 8, 8, { ...st, second: armored ? st.second : hex('#AC685B') });
+    const chest = faces.find((f) => f.part === 'body' && f.face === 'front' && !f.layer);
+    const emblem = EMBLEMS[style.emblem];
+    if (motif) stampMotif(data, SKIN_SIZE, 1, motif, chest.x + Math.floor((8 - motif.w) / 2), chest.y + 3, motif.w, motif.h);
+    else if (emblem) stamp(data, SKIN_SIZE, 1, emblem, chest.x + Math.floor((8 - emblem[0].length) / 2), chest.y + 3, emblem[0].length, emblem.length, st);
+    // Die Jacke überdeckt das Motiv nicht.
+    if (motif || emblem) {
+      const jacket = faces.find((f) => f.part === 'body' && f.face === 'front' && f.layer);
+      for (let y = 3; y < 10; y++) data.fill(0, ((jacket.y + y) * SKIN_SIZE + jacket.x) * 4, ((jacket.y + y) * SKIN_SIZE + jacket.x + 8) * 4);
+    }
+
+    let animation = null;
+    if (plan.animate) {
+      const effect = animKindFor(plan.animate, style);
+      animation = animateFrames(effect === 'burn' ? 'pulse' : effect, data, SKIN_SIZE, SKIN_SIZE, style, st, variantSeed);
+    }
+    return { name, data, animation };
+  });
 }
 
 // ---------- Bild als Vorlage ----------
@@ -1151,15 +1308,20 @@ export function pixelate(img, w, h, palette = null, { outline = false } = {}) {
 }
 
 /** "Ganzes Pixelbild": Bild auf die Groesse der Textur bringen (bei Items in deren Umriss) */
-function pixelArtInto(src, img) {
+function pixelArtInto(src, img, look) {
   const fh = Math.min(src.w, src.h);
-  const pic = pixelate(img.source, src.w, fh, img.paletteColors, { outline: src.w <= 32 });
+  const paletteSize = { edge: 8, gradient: 6, diagonal: 10, top: 9, blocks: 4 }[look.kind];
+  const colors = paletteSize ? img.paletteColors?.slice(0, paletteSize) : img.paletteColors;
+  const outline = look.kind === 'edge' || (look.kind !== 'gradient' && src.w <= 32);
+  const pic = pixelate(img.source, src.w, fh, colors, { outline });
   const out = new Uint8ClampedArray(src.data.length);
   for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) {
     const i = (y * src.w + x) * 4, j = ((y % fh) * src.w + x) * 4;
     if (img.keepShape && !src.data[i + 3]) continue;
     if (!pic.data[j + 3]) { if (img.keepShape) { out[i] = src.data[i]; out[i + 1] = src.data[i + 1]; out[i + 2] = src.data[i + 2]; out[i + 3] = src.data[i + 3]; } continue; }
-    out[i] = pic.data[j]; out[i + 1] = pic.data[j + 1]; out[i + 2] = pic.data[j + 2]; out[i + 3] = 255;
+    const c = [pic.data[j], pic.data[j + 1], pic.data[j + 2]];
+    out.set(look.amount ? shade(c, look.light) : c, i);
+    out[i + 3] = 255;
   }
   return out;
 }

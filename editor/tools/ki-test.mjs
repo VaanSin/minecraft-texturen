@@ -1,10 +1,45 @@
 // Prueft die Textur-KI ohne Browser: Verstehen von Beispielsaetzen + Malen.  node --no-warnings tools/ki-test.mjs
-import { parsePrompt, render, playerPreview, paletteFromImage, pixelate, drafts, foreground } from '../public/ki.js';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { parsePrompt, render, playerPreview, paletteFromImage, pixelate, drafts, foreground, selectDrafts, draftDistance, generateSkinDrafts } from '../public/ki.js';
+import { skinFaces, blankSkin, launcherSkin, skinFront, changeSkinModel, expandLegacySkin } from '../public/skin.js';
 import { toSheet, sheetLayouts, framesFromSheet } from '../public/animation.js';
 import { ZipReader } from '../lib/zip.mjs';
 import { decodePng } from '../lib/png.mjs';
 import { defaultRoots, scanProfiles, findJar } from '../lib/launchers.mjs';
 import os from 'node:os';
+
+// Skins funktionieren auch ohne installierte Minecraft-Version.
+const { models } = JSON.parse(fs.readFileSync(new URL('../public/models.json', import.meta.url), 'utf8'));
+for (const model of ['classic', 'slim']) {
+  const key = model === 'slim' ? 'minecraft:player_slim#main' : 'minecraft:player#main';
+  const rect = (a) => {
+    const u = [3, 8, 13, 18].map((i) => Math.round(a[i] * 64));
+    const v = [4, 9, 14, 19].map((i) => Math.round(a[i] * 64));
+    return [Math.min(...u), Math.min(...v), Math.max(...u) - Math.min(...u), Math.max(...v) - Math.min(...v)].join(',');
+  };
+  const expected = Object.values(models[key].root.c).flatMap((group) => [
+    ...group.q, ...Object.values(group.c).flatMap((g) => g.q),
+  ]).map(rect).sort();
+  const faces = skinFaces(model);
+  assert.deepEqual(faces.map((f) => [f.x, f.y, f.w, f.h].join(',')).sort(), expected);
+  const d = blankSkin(model);
+  assert.equal(d.length, 64 * 64 * 4);
+  const alphaAt = (x, y) => d[(y * 64 + x) * 4 + 3];
+  for (const f of faces) assert.equal(alphaAt(f.x, f.y), f.layer ? 0 : 255);
+  const plan = parsePrompt('blauer Hoodie mit Stern', new Set());
+  plan.animate = 'pulse';
+  const variations = generateSkinDrafts(plan, model);
+  assert.equal(variations.length, 3);
+  assert.equal(new Set(variations.map((draft) => Buffer.from(skinFront(draft.data, model).data).toString('base64'))).size, 3);
+  for (const draft of variations) {
+    assert.deepEqual(draft.data, launcherSkin(draft.data, model));
+    assert.equal(draft.animation.frames.length, 10);
+  }
+}
+assert.deepEqual(changeSkinModel(blankSkin('classic'), 'classic', 'slim'), blankSkin('slim'));
+assert.deepEqual(expandLegacySkin(blankSkin('classic').slice(0, 64 * 32 * 4)), blankSkin('classic'));
+console.log('  ok     Java-Skins: UV-Koordinaten, PNG-Basis, Modelle und KI-Animation');
 
 const roots = defaultRoots(os.tmpdir());
 const versions = [...new Set(scanProfiles(roots).map((p) => p.version))].filter((v) => findJar(roots, v) && /^2\d\./.test(v)).sort((a, b) => a.localeCompare(b, 'de', { numeric: true }));
@@ -52,6 +87,14 @@ for (const [text, styleName, check] of cases) {
   ok('Pixelbild: Gemälde voll bemalt', pic.picture && pic.motif === 'drache' && rp.data.every((v, i) => i % 4 !== 3 || v === 255));
   const ds = await drafts(parsePrompt('Spiderman Rüstung als Kupferrüstung', avail, null), new Map(parsePrompt('Spiderman Rüstung als Kupferrüstung', avail, null).targets.map((x) => [x, img(x)])), new Set(), { seed: 1 }, 6);
   ok('6 Entwürfe, nach Punkten sortiert', ds.length === 6 && ds.every((d, i) => i === 0 || ds[i - 1].score >= d.score), ds.map((d) => Math.round(d.score * 100)).join(','));
+  for (const prompt of ['blaues Feuer Schwert', 'Lava Stein', 'Spiderman Rüstung als Kupferrüstung', 'Pixelbild von einem Drachen']) {
+    const plan = parsePrompt(prompt, avail, null);
+    const entries = await drafts(plan, new Map(plan.targets.map((x) => [x, img(x)])), new Set(), { seed: 1 }, 6);
+    const best = selectDrafts(entries);
+    ok(`Drei sichtbar unterschiedliche Textur-Entwürfe für „${prompt}“`, best.length === 3
+      && best.every((a, i) => best.slice(i + 1).every((b) => draftDistance(a, b) >= 0.045)));
+    assert.equal(selectDrafts([entries[0], entries[0], entries[0]]).length, 1);
+  }
 }
 // Aufloesung und Sprite-Sheets
 {

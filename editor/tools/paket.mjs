@@ -57,6 +57,13 @@ So geht's:
   Im Spiel: /thema <name> zum Wechseln, /thema normal für die Originale.
   (Den Befehl /thema installiert das Programm automatisch, wo es geht. Für Fabric braucht man die Fabric API.)
 
+Eigener Java-Skin:
+  1. Oben "Skins" wählen und selbst malen, ein PNG öffnen oder "Mit KI erstellen" wählen.
+  2. Mit "Vorlage" kannst du ein eigenes Bild halbtransparent zum Abpausen auflegen.
+  3. "Skin-PNG" exportieren. Im Minecraft Launcher unter Java Edition -> Skins -> Neuer Skin
+     das gleiche Modell (Classic oder Slim) wählen und die PNG-Datei importieren.
+  Animationen kannst du im Editor abspielen und als Sprite-Sheet exportieren.
+
 Online-Konto (optional): oben "Konto" -> Registrieren mit Benutzername + Passwort.
   Dann sind deine Themen auf jedem PC da, und du kannst Themen von anderen finden.
 
@@ -64,9 +71,20 @@ Deine Themen liegen im Profil unter resourcepacks\\Thema-<Name>.
 Einstellungen: %APPDATA%\\MinecraftTexturen
 `.replace(/\n/g, '\r\n'));
 
-// Zip (mit Windows-Bordmitteln)
+// ZIP-Einträge mit plattformunabhängigen Pfaden sammeln.
+function addTree(entries, dir, prefix, skip = () => false) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (skip(e.name)) continue;
+    const p = path.join(dir, e.name), name = prefix + e.name;
+    if (e.isDirectory()) addTree(entries, p, name + '/', skip);
+    else entries.push({ name, data: fs.readFileSync(p) });
+  }
+}
+
 const zip = path.join(OUT, `MinecraftTexturen-${VERSION}-Windows.zip`);
-execFileSync('powershell', ['-NoProfile', '-Command', `Compress-Archive -Path '${STAGE}' -DestinationPath '${zip}' -CompressionLevel Optimal`], { stdio: 'inherit' });
+const windowsEntries = [];
+addTree(windowsEntries, STAGE, 'Minecraft Texturen/');
+fs.writeFileSync(zip, writeZip(windowsEntries));
 
 // ---------- Mac: "Minecraft Texturen.app" mit Node fuer Apple-Chip (arm64) und Intel (x64) ----------
 // Node fuer macOS kommt von nodejs.org (gleiche Version wie hier, Pruefsumme aus SHASUMS256.txt) und wird zwischengespeichert.
@@ -114,15 +132,7 @@ function macIcon() {
 const MAC_ROOT = 'Minecraft Texturen/';
 const APP = MAC_ROOT + 'Minecraft Texturen.app/Contents/';
 const macEntries = [];
-const addTree = (dir, prefix, skip = () => false) => {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    if (skip(e.name)) continue;
-    if (e.isDirectory()) addTree(p, prefix + e.name + '/');
-    else macEntries.push({ name: prefix + e.name, data: fs.readFileSync(p) });
-  }
-};
-addTree(app, APP + 'Resources/app/', (n) => n === 'node'); // gleiche Programmdateien wie Windows, ohne node.exe
+addTree(macEntries, app, APP + 'Resources/app/', (n) => n === 'node'); // gleiche Programmdateien wie Windows, ohne node.exe
 for (const arch of ['arm64', 'x64']) {
   const dir = await macNode(arch);
   macEntries.push({ name: `${APP}Resources/node/${arch}/node`, data: fs.readFileSync(path.join(dir, 'bin', 'node')), mode: 0o755 });

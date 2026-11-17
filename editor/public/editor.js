@@ -60,7 +60,7 @@ export class PixelEditor {
 
   changed() { this.updateImage(); this.render(); this.hooks.onChange?.(); }
 
-  snapshot() { const d = this.doc; return { w: d.w, h: d.h, data: d.data.slice(), frameH: d.frameH, anim: d.anim ? structuredClone(d.anim) : d.anim }; }
+  snapshot() { const d = this.doc; return { w: d.w, h: d.h, data: d.data.slice(), frameH: d.frameH, anim: d.anim ? structuredClone(d.anim) : d.anim, ...(d.model ? { model: d.model, name: d.name } : {}) }; }
 
   pushUndo() {
     const d = this.doc;
@@ -163,6 +163,7 @@ export class PixelEditor {
     for (let y = y0; y < y1; y++) for (let x = x0 + ((x0 + y) % 2); x < x1; x += 2) c.fillRect(this.ox + x * cell, this.oy + y * cell, cell, cell);
     c.imageSmoothingEnabled = false;
     c.drawImage(this.img, this.ox, this.oy, W, H);
+    this.hooks.drawOverlay?.(c, d, this.ox, this.oy, z);
     if (this.showGrid && z >= 6) {
       const vx0 = Math.max(0, Math.floor(-this.ox / z)), vx1 = Math.min(d.w, Math.ceil((this.cw - this.ox) / z));
       const vy0 = Math.max(0, Math.floor(-this.oy / z)), vy1 = Math.min(d.h, Math.ceil((this.ch - this.oy) / z));

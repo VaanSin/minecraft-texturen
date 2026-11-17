@@ -4,8 +4,10 @@ import { toHex, fromHex, css, keyOf, unkey, percent, rainbowSort, QUICK, hsl as 
 import { PixelEditor, isTyping } from './editor.js';
 import { computeWarnings, describeAlpha } from './warnings.js';
 import { Viewer3D } from './viewer3d.js';
-import { parsePrompt, drafts as kiDrafts, styleFromPalette, paletteFromImage, pixelate, ideas, playerPreview, pretty, toHex as kiHex } from './ki.js';
+import { parsePrompt, drafts as kiDrafts, styleFromPalette, paletteFromImage, pixelate, ideas, playerPreview, pretty, selectDrafts, generateSkinDrafts, toHex as kiHex } from './ki.js';
 import { frameCount, frameHeight, getFrame, joinFrames, canAnimate, speedText, EFFECTS, makeEffect, blend, timeline, sheetLayouts, framesFromSheet, toSheet } from './animation.js';
+
+import { SKIN_SIZE, MAX_SKIN_FRAMES, SKIN_ANIM_NOTE, skinFaces, blankSkin, launcherSkin, changeSkinModel, expandLegacySkin, skinFront } from './skin.js';
 
 const $ = (s) => document.querySelector(s);
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -17,7 +19,7 @@ const S = {
   info: null, theme: 'normal', themes: [],
   textures: [], changed: new Set(), animated: new Set(),
   cat: 'block', search: '',
-  doc: null,
+  doc: null, skinMode: false, skinDoc: null, textureDoc: null,
   drafts: new Map(),         // Pfad -> bearbeitete, noch nicht gespeicherte Textur
   profileConfirmed: false,   // Profil in diesem Programmstart schon gewaehlt?
   tool: 'pencil', color: [79, 255, 35, 255],
@@ -81,14 +83,15 @@ const editor = new PixelEditor($('#view'), {
   getTool: () => S.tool,
   getColor: () => S.color,
   getOptions: () => S.opt,
-  isReadOnly: () => S.theme === 'normal',
+  isReadOnly,
+  drawOverlay,
   onChange: () => docChanged(),
   onHover: (h) => showHover(h),
   onPick: (rgba) => setColor(rgba, false),
   onPickEnd: () => { addRecent(S.color); },
   onReplace: (from, to) => S.doc.replaced.push({ from: from.slice(0, 3), to: to.slice() }),
   onZoom: (z) => { $('#zoomLabel').textContent = Math.round(z * 100) + ' %'; },
-  onRestore: () => { if (S.animOpen) renderAnimBar(); },
+  onRestore: () => { if (S.skinMode) showSkinModel(); if (S.animOpen) renderAnimBar(); },
 });
 const viewer = new Viewer3D($('#view3d'), $('#modelSelect'));
 
@@ -96,10 +99,8 @@ init().catch((e) => toast('Start fehlgeschlagen: ' + e.message, 'bad'));
 
 async function init() {
   S.info = await get('/api/info');
-  if (S.info.setup) { await setupDialog(); S.info = await get('/api/info'); }
-  S.themes = S.info.themes;
-  const last = S.info.settings.lastTheme;
-  S.theme = S.themes.some((t) => t.key === last) ? last : S.themes[0]?.key || 'normal';
+  if (S.info.setup && await setupDialog()) S.info = await get('/api/info');
+  selectLastTheme();
   editor.setGrid(S.info.settings.showGrid);
   viewer.setAutoRotate(S.info.settings.autoRotate);
   buildTools();
@@ -108,13 +109,24 @@ async function init() {
   setColor(S.color, false);
   bindUi();
   if (IS_MAC) document.querySelectorAll('[title*="Strg"]').forEach((el) => { el.title = el.title.replace(/Strg/g, '⌘'); });
-  renderProfileButton();
-  renderThemeButton();
-  refreshKonto();
-  await loadList();
+  if (S.info.setup) {
+    switchWorkspace(true);
+  } else {
+    renderProfileButton();
+    renderThemeButton();
+    renderDocBar();
+    refreshKonto();
+    await loadList();
+  }
   setInterval(() => post('/api/ping').catch(() => {}), 5000);
   post('/api/ping').catch(() => {});
   document.addEventListener('visibilitychange', () => { if (!document.hidden) post('/api/ping').catch(() => toast('Das Programm im Hintergrund wurde beendet – bitte neu starten.', 'bad')); });
+}
+
+function selectLastTheme() {
+  S.themes = S.info.themes || [];
+  const last = S.info.settings.lastTheme;
+  S.theme = S.themes.some((t) => t.key === last) ? last : S.themes[0]?.key || 'normal';
 }
 
 async function loadList() {
@@ -251,6 +263,7 @@ async function openTexture(p, force = false) {
     catch (e) { toast('Konnte nicht geöffnet werden: ' + e.message, 'bad'); return; }
     if (force && S.drafts.delete(p)) { renderCats(); refreshTile(p); }
   }
+  if (S.skinMode) { S.textureDoc = doc; return; }
   S.doc = doc;
   editor.setDoc(S.doc);
   S.animFrame = 0;
@@ -301,6 +314,12 @@ const prettyName = (p) => p.split('/').pop().replace(/\.png$/, '').replace(/_/g,
 
 function renderDocBar() {
   const d = S.doc;
+  $('#referenceBtn').disabled = !d;
+  $('#referenceBtn').classList.toggle('on', !!d?.reference?.visible);
+  if (S.skinMode) {
+    renderSkinBar(d);
+    return;
+  }
   $('#docName').textContent = d ? prettyName(d.path) + (d.dirty ? ' •' : '') : 'Keine Textur geöffnet';
   $('#docPath').textContent = d ? d.path : '';
   const b = [];
@@ -333,6 +352,13 @@ function renderDocBar() {
 let changeTimer = null, tileTimer = null;
 function docChanged() {
   if (!S.doc) return;
+  if (S.skinMode) {
+    renderDocBar();
+    if (!S.animOpen) paintSkinPreview(getFrame(S.doc, Math.min(S.animFrame || 0, frameCount(S.doc) - 1)));
+    clearTimeout(changeTimer);
+    changeTimer = setTimeout(() => { renderPalette(); if (S.animOpen) renderAnimThumbs(); saveSkinDraft(); }, 160);
+    return;
+  }
   S.doc.dirty = true;
   const fresh = !S.drafts.has(S.doc.path);
   S.drafts.set(S.doc.path, S.doc);
@@ -458,7 +484,7 @@ async function setupDialog() {
         <h2>👋 Willkommen bei Minecraft Texturen!</h2>
         <p>Wähle das Minecraft-Profil, für das du Texturen malen willst. Gefunden werden Profile aus <b>CurseForge</b>, <b>Modrinth</b>, <b>Lunar Client</b> und dem <b>Minecraft Launcher</b>.</p>
         <div class="plist">${profiles.map((p) => profileCard({ ...p, texture: null }, null, true)).join('') || '<p>Kein Minecraft-Profil gefunden. Starte Minecraft einmal mit deinem Launcher und öffne dann dieses Programm neu.</p>'}</div>
-        <div class="actions"><button class="btn ghost" id="sRetry">🔄 Neu suchen</button><button class="btn primary" id="sGo" disabled>Los geht's</button></div>`);
+        <div class="actions"><button class="btn ghost" id="sSkin">👤 Nur Skins</button><button class="btn ghost" id="sRetry">🔄 Neu suchen</button><button class="btn primary" id="sGo" disabled>Los geht's</button></div>`);
       const bg = m.parentElement; bg.replaceWith(bg.cloneNode(true)); // nicht durch Klick daneben schliessen
       const mm = $('#modalRoot .modal');
       const go = mm.querySelector('#sGo');
@@ -466,16 +492,18 @@ async function setupDialog() {
       mm.addEventListener('click', async (e) => {
         const f = e.target.closest('[data-fetch]');
         if (f) { e.preventDefault(); if (await fetchMinecraft(f)) resolve('again'); return; }
+        if (e.target.closest('#sSkin')) resolve(null);
         if (e.target.closest('#sRetry')) resolve('again');
         if (e.target.closest('#sGo')) resolve(mm.querySelector('input[name=prof]:checked')?.value || 'again');
       });
     });
     if (id === 'again') continue;
+    if (id === null) { closeModal(); return false; }
     try {
       await post('/api/profile', { id });
       $('#modalRoot').innerHTML = '';
       S.profileConfirmed = true;
-      return;
+      return true;
     } catch (e) { toast(e.message, 'bad'); }
   }
 }
@@ -697,7 +725,7 @@ function noiseSuggestions() {
 }
 
 function setTool(id) {
-  if (S.theme === 'normal' && id !== 'picker') return;
+  if (isReadOnly() && id !== 'picker') return;
   if (S.tool === 'select' && id !== 'select') editor.commitSelection();
   S.tool = id;
   document.querySelectorAll('.tool').forEach((t) => t.classList.toggle('active', t.dataset.tool === id));
@@ -812,7 +840,7 @@ function paletteOf(d) {
 function renderPalette() {
   const d = S.doc;
   if (!d) { $('#palette').innerHTML = ''; $('#paletteCount').textContent = ''; return; }
-  const m = paletteOf(d);
+  const m = paletteOf(S.skinMode ? { data: getFrame(d, Math.min(S.animFrame || 0, frameCount(d) - 1)) } : d);
   const list = rainbowSort([...m.entries()], (e) => unkey(e[0]));
   $('#paletteCount').textContent = list.length + ' Farben';
   $('#palette').innerHTML = list.slice(0, 600).map(([k, n]) => {
@@ -823,14 +851,14 @@ function renderPalette() {
 
 function openColorMenu(rgba, count, anchor) {
   const m = $('#colorMenu');
-  const ro = S.theme === 'normal';
+  const ro = isReadOnly();
   m.innerHTML = `
     <div class="pop-head"><div class="swatch big checker"><div style="width:100%;height:100%;background:${css(rgba)}"></div></div>
       <div><div class="hexline">${toHex(rgba)}</div><div class="meta">${describeAlpha(rgba[3])}${count ? ' · ' + count + ' Pixel' : ''}</div></div></div>
     <button data-act="paint">🖌️ Damit malen</button>
     ${count ? '<button data-act="show">👁️ Im Bild zeigen</button>' : ''}
-    ${ro ? '' : '<button data-act="local">🎨 In dieser Textur ersetzen …</button>'}
-    ${ro ? '' : '<button data-act="global">🌍 In allen Texturen ersetzen …</button>'}`;
+    ${ro ? '' : '<button data-act="local">🎨 Farbe im Bild ersetzen …</button>'}
+    ${ro || S.skinMode ? '' : '<button data-act="global">🌍 In allen Texturen ersetzen …</button>'}`;
   m.hidden = false;
   const r = anchor.getBoundingClientRect();
   const left = Math.min(window.innerWidth - 262, Math.max(8, r.left - 120));
@@ -946,6 +974,7 @@ async function undoBatch() {
 // ---------- Hinweise ----------
 let lastWarnings = [];
 function renderWarnings() {
+  if (S.skinMode) { $('#warnings').innerHTML = ''; return; }
   const box = $('#warnings');
   if (!S.info.settings.showWarnings || !S.doc) { box.innerHTML = ''; return; }
   const ws = computeWarnings(S.doc, S.doc.path);
@@ -1113,14 +1142,20 @@ function renderAnimBar() {
   const bar = $('#animBar'), d = S.doc;
   $('#animBtn').classList.toggle('on', !!S.animOpen);
   bar.hidden = !S.animOpen || !d;
-  if (bar.hidden) { editor.focusFrame(null, false); stopAnimPreview(); return; }
-  const n = frameCount(d), ro = S.theme === 'normal', ca = canAnimate(d.path);
+  if (bar.hidden) {
+    editor.focusFrame(null, false);
+    stopAnimPreview();
+    if (S.skinMode) paintSkinPreview(getFrame(d, Math.min(S.animFrame || 0, frameCount(d) - 1)));
+    return;
+  }
+  const n = frameCount(d), ro = isReadOnly(), ca = S.skinMode ? { ok: false, why: SKIN_ANIM_NOTE } : canAnimate(d.path);
+  const atLimit = S.skinMode && n >= MAX_SKIN_FRAMES;
   S.animFrame = Math.max(0, Math.min(n - 1, S.animFrame || 0));
   const a = d.anim || {}, ft = a.frametime || 1;
   bar.innerHTML = `
     <div class="anim-head">
       <b>🎬 Animation</b><span class="muted">${n > 1 ? `${n} Bilder · ${d.w}×${frameHeight(d)}` : 'Noch keine Animation – mit ＋ oder dem Effekt-Assistenten anfangen'}</span>
-      ${!ca.ok ? `<span class="anim-warn" title="${esc(ca.why)}">⚠️ Läuft im Spiel ohne Mods nicht</span>` : ca.note ? `<span class="anim-note" title="${esc(ca.note)}">ℹ️ ab 1.20.2</span>` : ''}
+      ${!ca.ok ? `<span class="anim-warn" title="${esc(ca.why)}">${S.skinMode ? '👤 Skin-Animation im Editor' : '⚠️ Läuft im Spiel ohne Mods nicht'}</span>` : ca.note ? `<span class="anim-note" title="${esc(ca.note)}">ℹ️ ab 1.20.2</span>` : ''}
       <span class="fill"></span>
       <button class="btn small primary" data-a="effect" ${ro ? 'disabled' : ''}>✨ Effekt-Assistent</button>
       <button class="btn small" data-a="sheetload" ${ro ? 'disabled' : ''} title="Ein Sprite-Sheet (PNG mit Einzelbildern im Raster) als Animation laden – oder hier hineinziehen">📂 Sprite-Sheet laden</button>
@@ -1130,22 +1165,22 @@ function renderAnimBar() {
       <button class="iconbtn sm" data-a="close" title="Leiste schließen">✕</button>
     </div>
     <div class="anim-body">
-      <div class="anim-preview" title="So sieht es im Spiel aus"><canvas id="animPrev"></canvas>
+      <div class="anim-preview" title="${S.skinMode ? 'Animation im Editor' : 'So sieht es im Spiel aus'}"><canvas id="animPrev"></canvas>
         <button class="iconbtn sm" data-a="play" title="Abspielen / Anhalten">${S.animPaused ? '▶' : '⏸'}</button></div>
       <div class="anim-strip" id="animStrip">
         ${[...Array(n).keys()].map((i) => `<button class="aframe ${i === S.animFrame ? 'on' : ''}" data-f="${i}" title="Bild ${i + 1} bearbeiten"><canvas data-thumb="${i}"></canvas><span>${i + 1}</span></button>`).join('')}
-        <button class="aframe add" data-a="add" ${ro ? 'disabled' : ''} title="Neues Bild: Kopie vom gewählten Bild dahinter">＋</button>
+        <button class="aframe add" data-a="add" ${ro || atLimit ? 'disabled' : ''} title="Neues Bild: Kopie vom gewählten Bild dahinter">＋</button>
       </div>
       <div class="anim-ctrl">
         <div class="anim-row"><span class="lbl">Bild ${S.animFrame + 1}</span>
-          <button class="iconbtn sm" data-a="dup" ${ro ? 'disabled' : ''} title="Bild doppeln">⧉</button>
-          <button class="iconbtn sm" data-a="blank" ${ro ? 'disabled' : ''} title="Leeres Bild dahinter">⬜</button>
+          <button class="iconbtn sm" data-a="dup" ${ro || atLimit ? 'disabled' : ''} title="Bild doppeln">⧉</button>
+          <button class="iconbtn sm" data-a="blank" ${ro || atLimit ? 'disabled' : ''} title="Leeres Bild dahinter">⬜</button>
           <button class="iconbtn sm" data-a="left" ${ro || S.animFrame === 0 ? 'disabled' : ''} title="Nach vorne schieben">◀</button>
           <button class="iconbtn sm" data-a="right" ${ro || S.animFrame >= n - 1 ? 'disabled' : ''} title="Nach hinten schieben">▶</button>
           <button class="iconbtn sm" data-a="del" ${ro || n < 2 ? 'disabled' : ''} title="Bild löschen">🗑️</button>
         </div>
         <label class="anim-row" title="1 Tick = 1/20 Sekunde"><span class="lbl">Takt</span><input type="range" min="1" max="40" value="${ft}" data-a="speed" ${ro || n < 2 ? 'disabled' : ''}><span id="animSpeed" class="muted">${speedText(ft)}</span></label>
-        <label class="anim-row"><input type="checkbox" data-a="interp" ${a.interpolate ? 'checked' : ''} ${ro || n < 2 ? 'disabled' : ''}> Weich überblenden <span class="muted">(Minecraft mischt zwischen den Bildern)</span></label>
+        <label class="anim-row"><input type="checkbox" data-a="interp" ${a.interpolate ? 'checked' : ''} ${ro || n < 2 ? 'disabled' : ''}> Weich überblenden <span class="muted">(${S.skinMode ? 'in der Vorschau' : 'Minecraft mischt zwischen den Bildern'})</span></label>
         ${n > 1 && !ro ? '<button class="btn small ghost" data-a="remove" title="Nur Bild 1 bleibt">Animation entfernen</button>' : ''}
       </div>
     </div>`;
@@ -1182,6 +1217,7 @@ function startAnimPreview() {
       if (d.anim?.interpolate) data = blend(data, getFrame(d, tl[(k + 1) % tl.length].index), t / tl[k].time);
     }
     drawFrame(cv, data, d.w, fh, 124, 58);
+    if (S.skinMode) paintSkinPreview(data);
     animTimer = requestAnimationFrame(tick);
   };
   animTimer = requestAnimationFrame(tick);
@@ -1213,13 +1249,12 @@ function animAction(a, el) {
   if (a === 'close') { S.animOpen = false; renderAnimBar(); return; }
   if (a === 'help') return animHelp();
   if (a === 'play') { S.animPaused = !S.animPaused; el.textContent = S.animPaused ? '▶' : '⏸'; return; }
-  if (S.theme === 'normal') return;
-  if (a === 'sheetsave') { const sh = toSheet(frames, d.w, fh); return savePng(sh.data, sh.w, sh.h, `${pretty(d.path)}-sprite-sheet.png`); }
-  if (S.theme === 'normal') return;
+  if (isReadOnly()) return;
+  if (a === 'sheetsave') { const sh = toSheet(frames, d.w, fh); return savePng(sh.data, sh.w, sh.h, `${S.skinMode ? d.name || 'Skin' : pretty(d.path)}-sprite-sheet.png`); }
   if (a === 'sheetload') { $('#sheetFile').click(); return; }
   if (a === 'effect') return effectDialog();
   if (a === 'add' || a === 'dup') { frames.splice(i + 1, 0, frames[i].slice()); return setFrames(frames, fh, i + 1); }
-  if (a === 'blank') { frames.splice(i + 1, 0, new Uint8ClampedArray(frames[i].length)); return setFrames(frames, fh, i + 1); }
+  if (a === 'blank') { frames.splice(i + 1, 0, S.skinMode ? blankSkin(d.model) : new Uint8ClampedArray(frames[i].length)); return setFrames(frames, fh, i + 1); }
   if (a === 'left' && i > 0) { [frames[i - 1], frames[i]] = [frames[i], frames[i - 1]]; return setFrames(frames, fh, i - 1); }
   if (a === 'right' && i < n - 1) { [frames[i + 1], frames[i]] = [frames[i], frames[i + 1]]; return setFrames(frames, fh, i + 1); }
   if (a === 'del' && n > 1) { frames.splice(i, 1); return setFrames(frames, fh, i - 1); }
@@ -1229,18 +1264,18 @@ function animAction(a, el) {
 function bindAnimBar() {
   const bar = $('#animBar');
   bar.addEventListener('change', (e) => { if (e.target.id === 'sheetFile' && e.target.files[0]) { loadSheetFile(e.target.files[0]); e.target.value = ''; } });
-  bar.addEventListener('dragover', (e) => { if (S.theme !== 'normal') { e.preventDefault(); bar.classList.add('drop'); } });
+  bar.addEventListener('dragover', (e) => { if (!isReadOnly()) { e.preventDefault(); bar.classList.add('drop'); } });
   bar.addEventListener('dragleave', () => bar.classList.remove('drop'));
-  bar.addEventListener('drop', (e) => { e.preventDefault(); bar.classList.remove('drop'); if (S.theme !== 'normal' && e.dataTransfer.files[0]) loadSheetFile(e.dataTransfer.files[0]); });
+  bar.addEventListener('drop', (e) => { e.preventDefault(); bar.classList.remove('drop'); if (!isReadOnly() && e.dataTransfer.files[0]) loadSheetFile(e.dataTransfer.files[0]); });
   bar.addEventListener('click', (e) => {
     const f = e.target.closest('[data-f]');
-    if (f) { S.animFrame = Number(f.dataset.f); renderAnimBar(); editor.focusFrame(S.animFrame, true); return; }
+    if (f) { S.animFrame = Number(f.dataset.f); renderAnimBar(); editor.focusFrame(S.animFrame, true); if (S.skinMode) renderPalette(); return; }
     const b = e.target.closest('button[data-a]');
     if (b && !b.disabled) animAction(b.dataset.a, b);
   });
   bar.addEventListener('input', (e) => {
     const d = S.doc;
-    if (!d || S.theme === 'normal') return;
+    if (!d || isReadOnly()) return;
     if (e.target.dataset.a === 'speed') {
       d.anim = { ...(d.anim || {}), frametime: Number(e.target.value) };
       d.animDirty = true;
@@ -1260,7 +1295,7 @@ function bindAnimBar() {
 function effectDialog() {
   const d = S.doc;
   const fh = frameHeight(d), base = getFrame(d, S.animFrame || 0);
-  const ca = canAnimate(d.path);
+  const ca = S.skinMode ? { ok: false, why: SKIN_ANIM_NOTE } : canAnimate(d.path);
   let eff = EFFECTS[0], opts = { frames: eff.frames, ticks: eff.ticks, strength: 0.6, dir: 'down', interpolate: !!eff.interpolate };
   const m = openModal(`
     <h2>✨ Effekt-Assistent</h2>
@@ -1350,9 +1385,9 @@ function savePng(data, w, h, name) {
 /** Bild-Datei in Originalgroesse lesen (fuer Sprite-Sheets) */
 async function readImageRaw(file) {
   const bmp = await createImageBitmap(file);
-  if (bmp.width * bmp.height > 4096 * 4096) throw new Error('Das Bild ist zu groß.');
+  if (bmp.width * bmp.height > 4096 * 4096) { bmp.close(); throw new Error('Das Bild ist zu groß.'); }
   const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
-  const g = c.getContext('2d'); g.drawImage(bmp, 0, 0);
+  const g = c.getContext('2d'); g.drawImage(bmp, 0, 0); bmp.close();
   const id = g.getImageData(0, 0, c.width, c.height);
   return { width: id.width, height: id.height, data: id.data };
 }
@@ -1377,11 +1412,12 @@ function loadFrames(frames, fw, fh, anim) {
 /** Sprite-Sheet-Datei laden: Raster erkennen (bei mehreren Moeglichkeiten fragen) */
 async function loadSheetFile(file) {
   const d = S.doc;
-  if (!d || S.theme === 'normal') return;
+  if (!d || isReadOnly()) return;
   try {
     const img = await readImageRaw(file);
+    if (S.doc !== d) return;
     const fh0 = frameHeight(d);
-    const lays = sheetLayouts(img.width, img.height, d.w, fh0).filter((l) => l.fw >= d.w / 2 && l.n <= 128);
+    const lays = sheetLayouts(img.width, img.height, d.w, fh0).filter((l) => S.skinMode ? l.fw === SKIN_SIZE && l.fh === SKIN_SIZE && l.n <= MAX_SKIN_FRAMES : l.fw >= d.w / 2 && l.n <= 128);
     if (!lays.length) { toast(`Das Bild (${img.width}×${img.height}) passt nicht zu dieser Textur (${d.w}×${fh0} pro Bild). Die Einzelbilder müssen dasselbe Seitenverhältnis haben.`, 'bad'); return; }
     let lay = lays[0];
     if (lays.length > 1) {
@@ -1390,6 +1426,7 @@ async function loadSheetFile(file) {
       if (pick === null || pick === 'no') return;
       lay = lays[Number(pick)];
     }
+    if (S.doc !== d) return;
     const frames = framesFromSheet(img, lay);
     loadFrames(frames, lay.fw, lay.fh);
     toast(`📂 Sprite-Sheet geladen: ${frames.length} ${frames.length === 1 ? 'Bild' : 'Bilder'} à ${lay.fw}×${lay.fh}. Speichern nicht vergessen!`, 'ok');
@@ -1397,6 +1434,13 @@ async function loadSheetFile(file) {
 }
 
 function animHelp() {
+  if (S.skinMode) {
+    openModal(`<h2>🎬 Skin animieren</h2><p>${SKIN_ANIM_NOTE}</p>
+      <p>Füge mit <b>＋</b> Einzelbilder hinzu oder starte mit dem <b>Effekt-Assistenten</b>. Wähle ein Bild zum Übermalen aus. Der Takt regelt die Wiedergabe in der Vorschau.</p>
+      <p>Als <b>Sprite-Sheet</b> speicherst du alle Bilder in einem Raster.</p>
+      <div class="actions"><button class="btn primary" data-close>Fertig</button></div>`);
+    return;
+  }
   openModal(`
     <h2>❓ So funktionieren Animationen</h2>
     <div class="help">
@@ -1440,7 +1484,7 @@ async function readImageFile(file) {
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(bmp.width * sc)); c.height = Math.max(1, Math.round(bmp.height * sc));
   const g = c.getContext('2d');
-  g.drawImage(bmp, 0, 0, c.width, c.height);
+  g.drawImage(bmp, 0, 0, c.width, c.height); bmp.close();
   const id = g.getImageData(0, 0, c.width, c.height);
   return { width: id.width, height: id.height, data: id.data, url: c.toDataURL() };
 }
@@ -1488,7 +1532,7 @@ async function kiDialog() {
   let ideaSeed = Date.now();
   const m = openModal(`
     <h2>🤖 Textur-KI <span class="muted small">läuft ohne Internet</span></h2>
-    <p>Schreib, was du willst. Die KI malt mehrere Entwürfe, bewertet sie und zeigt dir die besten drei – erst <b>💾 Speichern</b> schreibt es ins Profil.</p>
+    <p>Schreib, was du willst. Die KI malt mehrere Entwürfe und zeigt dir sichtbar unterschiedliche Varianten – erst <b>💾 Speichern</b> schreibt es ins Profil.</p>
     <textarea id="kiText" rows="2" maxlength="300" placeholder="z. B. Spider-Man-Rüstung als Kupferrüstung · brennendes Diamantschwert · XP-Kugeln im Galaxie-Stil · Pixelbild von einem Drachen">${esc(S.kiText || '')}</textarea>
     <div class="ki-ideas"><span>💡 Ideen:</span><span id="kiIdeas"></span><button class="iconbtn sm" id="kiMore" title="Andere Ideen">🔄</button></div>
     <div class="ki-image">
@@ -1503,8 +1547,9 @@ async function kiDialog() {
     <div class="ki-where">🎮 Profil <select id="kiProf">${usable.map((p) => `<option value="${esc(p.id)}" ${p.id === current ? 'selected' : ''}>${esc(p.name)} · ${esc(p.launcherName)} · Minecraft ${esc(p.version)}</option>`).join('')}</select>
       <span>· Thema: <b id="kiTheme"></b></span></div>
     <div id="kiPlan" class="ki-plan"></div>
-    <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="kiGo">✨ Los geht's</button></div>`);
+    <div class="actions"><button class="btn" id="kiForSkin">👤 Einen Skin erstellen</button><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="kiGo">✨ Los geht's</button></div>`);
   const text = m.querySelector('#kiText');
+  m.querySelector('#kiForSkin').onclick = () => { const prompt = text.value; closeModal(); switchWorkspace(true); if (S.skinMode) skinDialog(prompt); };
   const update = () => {
     S.kiText = text.value;
     const plan = kiPlan(text.value);
@@ -1649,7 +1694,7 @@ async function kiRun(plan, seed) {
     }
     await p.step(5, 'fast fertig');
     closeModal();
-    kiChoose(plan, list.slice(0, 3), skin, seed);
+    kiChoose(plan, selectDrafts(list), skin, seed);
   } catch (e) { closeModal(); toast('Die KI ist gestolpert: ' + e.message, 'bad'); }
 }
 
@@ -1659,15 +1704,16 @@ function kiChoose(plan, best, skin, seed) {
   const stars = (s) => '★'.repeat(nStars(s)) + '☆'.repeat(5 - nStars(s));
   const m = openModal(`
     <h2>🤖 ${esc(plan.style.name)} – such dir einen Entwurf aus</h2>
-    <p>${plan.targets.length} ${plan.targets.length === 1 ? 'Textur' : 'Texturen'} für <b>${esc(plan.targetName)}</b>. Die KI hat 6 Entwürfe gemalt und die besten drei behalten.</p>
+    <p>${plan.targets.length} ${plan.targets.length === 1 ? 'Textur' : 'Texturen'} für <b>${esc(plan.targetName)}</b>. Aus sechs Versuchen zeigt die KI bis zu drei sichtbar verschiedene Varianten.</p>
     <div class="ki-choices">${best.map((d, i) => `
       <div class="ki-choice ${i === 0 ? 'top' : ''}">
-        <div class="ki-choice-head"><b>Entwurf ${i + 1}</b>${i === 0 ? ' <span class="badge green">Empfehlung</span>' : ''}<span class="stars" title="${Math.round(d.score * 100)} Punkte">${stars(d.score)}</span></div>
+        <div class="ki-choice-head"><b>${esc(d.look)}</b>${i === 0 ? ' <span class="badge green">Empfehlung</span>' : ''}<span class="stars" title="${Math.round(d.score * 100)} Punkte">${stars(d.score)}</span></div>
         <div class="ki-choice-pics" data-c="${i}"></div>
         ${d.results.some((r) => r.frameH) ? `<div class="ki-sheet" data-sheet="${i}"><span class="muted small">🎞️ Sprite-Sheet (alle Bilder)</span></div>` : ''}
         <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn ${i === 0 ? 'primary' : ''} small" data-take="${i}">${d.results.some((r) => r.frameH) ? '📥 In die Textur laden' : '✔ Diesen nehmen'}</button>${d.results.some((r) => r.frameH) ? `<button class="btn small" data-savesheet="${i}">💾 Sprite-Sheet</button>` : ''}</div>
       </div>`).join('')}</div>
     <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button class="btn" id="kiNew">🎲 6 neue Entwürfe</button></div>`);
+  m.classList.add('draft-modal');
   const anims = [];
   best.forEach((d, i) => {
     const box = m.querySelector(`[data-c="${i}"]`);
@@ -1968,6 +2014,411 @@ async function discoverDialog() {
 }
 
 // ---------- Einstellungen ----------
+// ---------- Skin-Editor und Malvorlage ----------
+const SKIN_DRAFT_KEY = 'mct-skin-draft';
+const skinPreview = document.createElement('canvas');
+skinPreview.width = skinPreview.height = SKIN_SIZE;
+const skinPreviewCtx = skinPreview.getContext('2d');
+
+function isReadOnly() {
+  return !S.skinMode && S.theme === 'normal';
+}
+
+function restoreSkinDraft() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SKIN_DRAFT_KEY));
+    const data = b64ToBytes(saved.data);
+    const n = data.length / (SKIN_SIZE ** 2 * 4);
+    if (Number.isInteger(n) && n >= 1 && n <= MAX_SKIN_FRAMES) {
+      return { data, model: saved.model === 'slim' ? 'slim' : 'classic', name: String(saved.name || 'Mein Skin').slice(0, 64),
+        h: n * SKIN_SIZE, frameH: n > 1 ? SKIN_SIZE : null, anim: n > 1 ? saved.anim : null };
+    }
+  } catch { /* leeren Skin öffnen */ }
+  return { data: blankSkin('classic'), h: SKIN_SIZE, model: 'classic', name: 'Mein Skin' };
+}
+
+function saveSkinDraft() {
+  const d = S.skinDoc;
+  if (!d) return;
+  try {
+    localStorage.setItem(SKIN_DRAFT_KEY, JSON.stringify({ name: d.name, model: d.model, anim: d.anim, data: bytesToB64(d.data) }));
+  } catch {
+    if (!S.skinStorageFailed) toast('Der Browser konnte den Skin-Entwurf nicht speichern. Exportiere dein PNG oder Sprite-Sheet.', 'bad');
+    S.skinStorageFailed = true;
+  }
+}
+
+function switchWorkspace(skins) {
+  if (S.skinMode === skins || saving) return;
+  editor.commitSelection();
+  stopAnimPreview();
+  $('#hoverInfo').hidden = true;
+  $('#imageMenu').hidden = true;
+  $('#colorMenu').hidden = true;
+  editor.highlightSet = null;
+  editor.activeFrame = null;
+  if (skins) {
+    S.textureDoc = S.doc;
+    S.textureAnim = { animOpen: S.animOpen, animFrame: S.animFrame, animPaused: S.animPaused };
+    S.skinDoc ||= { w: SKIN_SIZE, path: 'skin.png', undo: [], redo: [], replaced: [], ...restoreSkinDraft() };
+    Object.assign(S, { doc: S.skinDoc, animOpen: frameCount(S.skinDoc) > 1, animFrame: S.skinFrame || 0, animPaused: true });
+  } else {
+    S.skinFrame = S.animFrame;
+    saveSkinDraft();
+    Object.assign(S, S.textureAnim, { doc: S.textureDoc });
+  }
+  S.skinMode = skins;
+  document.body.classList.toggle('skin-mode', skins);
+  $('#skinPanel').hidden = !skins;
+  $('#imageBtn').hidden = skins;
+  $('#textureTab').classList.toggle('active', !skins);
+  $('#textureTab').setAttribute('aria-pressed', !skins);
+  $('#skinTab').classList.toggle('active', skins);
+  $('#skinTab').setAttribute('aria-pressed', skins);
+  $('#welcome').hidden = !!S.doc;
+  if (isReadOnly()) setTool('picker');
+  else if (S.tool === 'picker') setTool('pencil');
+  editor.setDoc(S.doc);
+  renderDocBar();
+  renderPalette();
+  renderWarnings();
+  renderAnimBar();
+  if (skins) showSkinModel();
+  else {
+    $('#skinFallback').hidden = true;
+    $('#view3d').hidden = false;
+    if (S.doc) viewer.show(S.doc.path, S.doc, editor.img, outfitExtras(S.doc.path)).catch(() => viewer.hide());
+    else viewer.hide();
+  }
+  requestAnimationFrame(() => {
+    editor.fit();
+    if (S.doc && S.animOpen && frameCount(S.doc) > 1) editor.focusFrame(S.animFrame);
+  });
+}
+
+function renderSkinBar(d) {
+  const n = frameCount(d), model = d.model === 'slim' ? 'Slim' : 'Classic';
+  $('#docName').textContent = d.name || 'Mein Skin';
+  $('#docPath').textContent = 'Minecraft Java · ' + model;
+  $('#docBadges').innerHTML = '<span class="badge">64×64</span>' + (n > 1 ? `<span class="badge cyan">▶ ${n} Bilder</span>` : '');
+  $('#skinModel').value = d.model;
+  if (document.activeElement !== $('#skinName')) $('#skinName').value = d.name;
+  $('#readonly').hidden = true;
+  $('#saveBtn').disabled = false;
+  $('#saveBtn').classList.remove('dirty');
+  $('#saveBtn').textContent = '💾 Skin-PNG';
+  $('#saveBtn').title = 'Aktuelles Bild als Skin-PNG exportieren';
+  $('#animBtn').disabled = false;
+  $('#animBtn').classList.toggle('on', !!S.animOpen);
+  $('#undoBtn').disabled = !d.undo.length;
+  $('#redoBtn').disabled = !d.redo.length;
+  document.querySelectorAll('.tool').forEach((t) => { t.disabled = false; });
+  document.title = (d.name || 'Mein Skin') + ' – Minecraft Texturen';
+}
+
+function paintSkinPreview(data) {
+  if ($('#skinFallback').hidden) {
+    skinPreviewCtx.putImageData(new ImageData(data, SKIN_SIZE, SKIN_SIZE), 0, 0);
+    if (viewer.mode === 'skin') viewer.update();
+  } else {
+    const front = skinFront(data, S.doc.model);
+    $('#skinFallback').getContext('2d').putImageData(new ImageData(front.data, front.w, front.h), 0, 0);
+  }
+}
+
+function showSkinModel() {
+  const d = S.doc;
+  $('#view3d').hidden = false;
+  $('#skinFallback').hidden = true;
+  viewer.hide();
+  paintSkinPreview(getFrame(d, Math.min(S.animFrame || 0, frameCount(d) - 1)));
+  viewer.showSkin(d.model, skinPreview).catch(() => {
+    if (!S.skinMode || S.doc !== d || viewer.mode !== 'skin') return;
+    viewer.hide();
+    $('#view3d').hidden = true;
+    $('#skinFallback').hidden = false;
+    paintSkinPreview(getFrame(d, Math.min(S.animFrame || 0, frameCount(d) - 1)));
+  });
+}
+
+function replaceSkin(frames, { model = S.doc.model, name = S.doc.name, anim = null } = {}) {
+  editor.commitSelection();
+  editor.pushUndo();
+  const n = frames.length;
+  Object.assign(S.doc, { model, name, data: joinFrames(frames, SKIN_SIZE, SKIN_SIZE), h: SKIN_SIZE * n, frameH: n > 1 ? SKIN_SIZE : null, anim });
+  S.animOpen = n > 1;
+  S.animFrame = 0;
+  S.animPaused = false;
+  editor.setDoc(S.doc);
+  renderAnimBar();
+  editor.focusFrame(n > 1 ? 0 : null);
+  docChanged();
+  showSkinModel();
+  saveSkinDraft();
+}
+
+function exportSkin() {
+  editor.commitSelection();
+  const d = S.doc;
+  const data = launcherSkin(getFrame(d, Math.min(S.animFrame || 0, frameCount(d) - 1)), d.model);
+  const name = (d.name.trim() || 'Mein Skin').replace(/\.png$/i, '');
+  savePng(data, SKIN_SIZE, SKIN_SIZE, `${name}-${d.model}.png`);
+  saveSkinDraft();
+}
+
+function skinDialog(prefill = S.skinPrompt || '') {
+  const m = openModal(`
+    <h2>🤖 Skin-KI <span class="muted small">läuft ohne Internet</span></h2>
+    <p>Beschreibe deine Figur, Farben und ein Motiv. Jede Variante lässt sich danach bemalen.</p>
+    <textarea id="kiText" rows="2" maxlength="300" placeholder="z. B. blauer Hoodie mit Stern">${esc(prefill)}</textarea>
+    <div class="ki-ideas"><span>💡 Ideen</span><span>
+      ${['Blauer Hoodie mit Stern', 'Creeper im Neon-Stil', 'Lila Roboter mit Blitz', 'Roter Magier mit Mond'].map((idea) => `<button class="chip" data-skin-idea="${idea}">${idea}</button>`).join('')}
+    </span></div>
+    <div class="ki-image">
+      <label class="btn small">📷 Farben und Brustmotiv aus Bild<input type="file" id="skinKiFile" accept="image/*" hidden></label>
+      <span id="skinKiImg" class="muted"></span><button id="skinKiRemove" class="iconbtn sm" title="Bild entfernen" hidden>✕</button>
+    </div>
+    <div class="ki-where">
+      <label>Modell <select id="skinKiModel"><option value="classic">Classic</option><option value="slim">Slim</option></select></label>
+      <label>Effekt <select id="skinKiEffect"><option value="text">Aus dem Text</option><option value="none">Keiner</option>
+        <option value="pulse">Leuchten</option><option value="shine">Lauflicht</option><option value="sparkle">Funkeln</option>
+        <option value="blink">Blinken</option><option value="rainbow">Regenbogen</option><option value="tint">Farbwechsel</option>
+      </select></label>
+    </div>
+    <div id="skinKiPlan" class="ki-plan" aria-live="polite"></div>
+    <div class="actions"><button class="btn ghost" data-close>Abbrechen</button><button id="skinKiGo" class="btn primary">✨ Drei Skins entwerfen</button></div>`);
+  const input = m.querySelector('#kiText'), model = m.querySelector('#skinKiModel'), effect = m.querySelector('#skinKiEffect');
+  const go = m.querySelector('#skinKiGo');
+  let image = null, plan;
+  model.value = S.doc.model;
+  const update = () => {
+    S.skinPrompt = input.value;
+    plan = parsePrompt(input.value, new Set());
+    if (image && !plan.style) plan.style = styleFromPalette(image.palette, 'Mein Bildmotiv');
+    if (effect.value !== 'text') plan.animate = effect.value === 'none' ? null : effect.value;
+    const style = plan.style;
+    go.disabled = !style;
+    m.querySelector('#skinKiPlan').innerHTML = style ? `<b>${esc(style.name)}</b> ${swatches(Object.values(style.colors))}
+      ${plan.motif && !image ? ' · Motiv ' + esc(plan.motif) : ''}
+      ${plan.animate ? '<div class="ki-note">🎬 ' + SKIN_ANIM_NOTE + '</div>' : ''}`
+      : 'Nenne z. B. einen Hoodie, einen Creeper oder zwei Farben.';
+  };
+  input.addEventListener('input', update);
+  effect.addEventListener('change', update);
+  m.querySelector('#skinKiFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const img = await readImageFile(file);
+      if (!m.isConnected) return;
+      const palette = paletteFromImage(img);
+      if (!palette.length) throw new Error('Das Bild enthält keine sichtbaren Farben.');
+      image = { img, palette };
+      m.querySelector('#skinKiImg').textContent = file.name;
+      m.querySelector('#skinKiRemove').hidden = false;
+      update();
+    } catch (err) { toast('Bild konnte nicht verwendet werden. ' + err.message, 'bad'); }
+  });
+  m.querySelector('#skinKiRemove').onclick = (e) => {
+    image = null;
+    e.currentTarget.hidden = true;
+    m.querySelector('#skinKiImg').textContent = '';
+    update();
+  };
+  m.addEventListener('click', (e) => {
+    const idea = e.target.closest('[data-skin-idea]');
+    if (idea) { input.value = idea.dataset.skinIdea; update(); }
+  });
+  go.addEventListener('click', () => {
+    const opts = { image: image?.img, seed: Date.now() % 100000 };
+    try { chooseSkinDraft(plan, model.value, opts); }
+    catch (e) { toast('Skin-Entwürfe fehlgeschlagen. ' + e.message, 'bad'); }
+  });
+  update();
+  input.focus();
+}
+
+function chooseSkinDraft(plan, model, opts) {
+  const drafts = generateSkinDrafts(plan, model, opts);
+  closeModal();
+  const m = openModal(`
+    <h2>👤 ${esc(plan.style.name)} · Skin auswählen</h2>
+    ${plan.animate ? '<p class="hint">' + SKIN_ANIM_NOTE + '</p>' : ''}
+    <div class="ki-choices skin-choices">
+      ${drafts.map((d, i) => `<div class="ki-choice">
+        <div class="ki-choice-head"><b>${esc(d.name)}</b></div>
+        <div class="ki-choice-pics"><canvas data-skin-draft="${i}" aria-label="${esc(d.name)}"></canvas></div>
+        <button class="btn small primary" data-skin-take="${i}">✔ Übernehmen</button>
+      </div>`).join('')}
+    </div>
+    <div class="actions"><button class="btn ghost" data-close>Abbrechen</button>
+      <button class="btn" id="skinReroll">🎲 Neue Entwürfe</button></div>`);
+  m.classList.add('draft-modal');
+  const canvas = [...m.querySelectorAll('[data-skin-draft]')];
+  const paint = (i, data) => { const p = skinFront(data, model); drawFrame(canvas[i], p.data, p.w, p.h, 80, 128); };
+  let raf = 0;
+  drafts.forEach((d, i) => paint(i, d.data));
+  if (plan.animate) {
+    const start = performance.now();
+    let lastFrame = -1;
+    const tick = (now) => {
+      if (!m.isConnected) return;
+      const frame = Math.floor((now - start) / (50 * drafts[0].animation.frametime));
+      if (frame !== lastFrame) drafts.forEach((d, i) => paint(i, d.animation.frames[frame % d.animation.frames.length]));
+      lastFrame = frame;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  }
+  modalCancel = () => cancelAnimationFrame(raf);
+  m.querySelector('#skinReroll').onclick = () => chooseSkinDraft(plan, model, { ...opts, seed: opts.seed + 83 });
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-skin-take]');
+    if (!b) return;
+    const d = drafts[Number(b.dataset.skinTake)], a = d.animation;
+    closeModal();
+    replaceSkin(a?.frames || [d.data], { model, name: plan.style.name,
+      anim: a ? { frametime: a.frametime, interpolate: a.interpolate } : null });
+  });
+}
+
+function bindSkinUi() {
+  $('#skinTab').addEventListener('click', () => switchWorkspace(true));
+  $('#textureTab').addEventListener('click', async () => {
+    if (!S.skinMode) return;
+    try {
+      if (S.info.setup) {
+        if (!await setupDialog()) return;
+        S.info = await get('/api/info');
+        selectLastTheme();
+        renderProfileButton();
+        renderThemeButton();
+        refreshKonto();
+        await loadList();
+      }
+      switchWorkspace(false);
+    } catch (e) { toast(e.message, 'bad'); }
+  });
+  $('#skinName').addEventListener('input', (e) => { S.doc.name = e.target.value; renderDocBar(); saveSkinDraft(); });
+  $('#skinModel').addEventListener('change', (e) => {
+    const d = S.doc, model = e.target.value;
+    editor.commitSelection();
+    editor.pushUndo();
+    const frames = Array.from({ length: frameCount(d) }, (_, i) => changeSkinModel(getFrame(d, i), d.model, model));
+    d.model = model;
+    d.data = joinFrames(frames, SKIN_SIZE, SKIN_SIZE);
+    editor.changed();
+    showSkinModel();
+    saveSkinDraft();
+  });
+  $('#skinNew').addEventListener('click', () => replaceSkin([blankSkin(S.doc.model)], { name: 'Mein Skin' }));
+  $('#skinImport').addEventListener('click', () => $('#skinFile').click());
+  $('#skinFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0], doc = S.doc;
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const sig = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+      if (sig.join() !== '137,80,78,71,13,10,26,10') throw new Error('Wähle eine PNG-Datei aus.');
+      const image = await readImageRaw(file);
+      if (S.doc !== doc || !S.skinMode) return;
+      if (image.width !== SKIN_SIZE || ![32, SKIN_SIZE].includes(image.height)) throw new Error('Ein Java-Skin braucht 64×64 oder 64×32 Pixel.');
+      const legacy = image.height === 32;
+      const name = file.name.replace(/\.png$/i, '').slice(0, 64);
+      replaceSkin([legacy ? expandLegacySkin(image.data) : image.data], { name, model: legacy ? 'classic' : S.doc.model });
+      toast('📂 Skin geladen', 'ok');
+    } catch (err) { toast(err.message, 'bad'); }
+  });
+  $('#skinGenerate').addEventListener('click', () => skinDialog());
+  $('#skinGuides').addEventListener('change', () => editor.render());
+}
+
+function drawOverlay(ctx, doc, ox, oy, zoom) {
+  const y = oy + frameHeight(doc) * Math.min(S.animFrame || 0, frameCount(doc) - 1) * zoom;
+  const ref = doc.reference;
+  if (ref?.visible) {
+    ctx.globalAlpha = ref.opacity / 100;
+    ctx.drawImage(ref.bmp, ox + ref.x * zoom, y + ref.y * zoom, ref.w * zoom * ref.scale / 100, ref.h * zoom * ref.scale / 100);
+    ctx.globalAlpha = 1;
+  }
+  if (!S.skinMode || !$('#skinGuides').checked) return;
+  ctx.lineWidth = 1;
+  for (const f of skinFaces(doc.model)) {
+    ctx.strokeStyle = f.color;
+    ctx.globalAlpha = f.layer ? 0.6 : 0.78;
+    ctx.setLineDash(f.layer ? [3, 3] : []);
+    ctx.strokeRect(ox + f.x * zoom + 0.5, y + f.y * zoom + 0.5, f.w * zoom - 1, f.h * zoom - 1);
+  }
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+}
+
+function referenceDialog() {
+  const doc = S.doc;
+  if (!doc) return;
+  const m = openModal(`
+    <h2>📎 Bild zum Abpausen</h2>
+    <p>Lege ein Bild über die Malfläche und richte es am Raster aus. Beim Speichern bleibt nur deine Zeichnung.</p>
+    <div class="row"><button id="refLoad" class="btn small">📂 Bild wählen</button><input id="refFile" type="file" accept="image/*" hidden><span id="refName" class="muted"></span></div>
+    <div id="refFields">
+      <div class="reference-options">
+        <label>X in Pixeln<input data-ref="x" type="number" step="1"></label>
+        <label>Y in Pixeln<input data-ref="y" type="number" step="1"></label>
+        <label>Größe in %<input data-ref="scale" type="number" min="1" max="1000" step="1"></label>
+        <label class="reference-opacity">Deckkraft <output id="refOpacity"></output><input data-ref="opacity" type="range" min="0" max="100"></label>
+      </div>
+      <div class="row"><label><input type="checkbox" data-ref="visible"> Vorlage anzeigen</label><button id="refRemove" class="btn small ghost">Vorlage entfernen</button></div>
+    </div>
+    <div class="actions"><button class="btn primary" data-close>Fertig</button></div>`);
+  const sync = () => {
+    const ref = doc.reference;
+    m.querySelector('#refFields').hidden = !ref;
+    m.querySelector('#refName').textContent = ref?.name || '';
+    if (ref) for (const e of m.querySelectorAll('[data-ref]')) {
+      if (e.type === 'checkbox') e.checked = ref[e.dataset.ref];
+      else e.value = ref[e.dataset.ref];
+    }
+    m.querySelector('#refOpacity').textContent = ref ? ref.opacity + ' %' : '';
+    renderDocBar();
+    editor.render();
+  };
+  m.querySelector('#refLoad').addEventListener('click', () => m.querySelector('#refFile').click());
+  m.querySelector('#refFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const bmp = await createImageBitmap(file);
+      if (!m.isConnected || S.doc !== doc) { bmp.close(); return; }
+      const h = frameHeight(doc);
+      const fit = Math.min(doc.w / bmp.width, h / bmp.height);
+      const w = bmp.width * fit, rh = bmp.height * fit;
+      doc.reference?.bmp.close();
+      doc.reference = { bmp, name: file.name, visible: true, w, h: rh, x: Math.round((doc.w - w) / 2), y: Math.round((h - rh) / 2), scale: 100, opacity: 40 };
+      sync();
+    } catch { toast('Das Bild konnte nicht geöffnet werden.', 'bad'); }
+  });
+  m.querySelector('#refRemove').addEventListener('click', () => {
+    doc.reference.bmp.close();
+    delete doc.reference;
+    sync();
+  });
+  m.addEventListener('input', (e) => {
+    const key = e.target.dataset.ref;
+    if (!key || !doc.reference) return;
+    if (e.target.type === 'checkbox') doc.reference[key] = e.target.checked;
+    else if (Number.isFinite(e.target.valueAsNumber)) {
+      const value = e.target.valueAsNumber;
+      doc.reference[key] = key === 'scale' ? Math.max(1, Math.min(1000, value)) : value;
+    }
+    m.querySelector('#refOpacity').textContent = doc.reference.opacity + ' %';
+    renderDocBar();
+    editor.render();
+  });
+  sync();
+}
+
 function settingsDialog() {
   const s = S.info.settings;
   const tog = (k, t, sub, disabled = false) => `<label class="toggle"><span>${t}<small>${sub}</small></span><span class="switch"><input type="checkbox" data-set="${k}" ${s[k] ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span></span></span></label>`;
@@ -1979,13 +2430,13 @@ function settingsDialog() {
     ${tog('autoRotate', '🧊 3D-Ansicht dreht sich', 'Mobs und Blöcke drehen sich von allein')}
     ${S.info.desktopAssets && s.mirrorTheme ? tog('mirrorDesktop', `🖥️ „${esc(S.themes.find((t) => t.key === s.mirrorTheme)?.name || s.mirrorTheme)}“ auch im Arbeitsordner`, `Speichert dieses Thema zusätzlich in ${esc(S.info.desktopAssets)}`) : ''}
     <div class="row">
-      <button class="btn small" data-act="folder">📂 Themen-Ordner öffnen</button>
+      <button class="btn small" data-act="folder" ${S.info.setup ? 'hidden' : ''}>📂 Themen-Ordner öffnen</button>
       ${S.info.canUndoBatch ? '<button class="btn small" data-act="undo">↩️ Letztes „überall ersetzen“ rückgängig</button>' : ''}
     </div>
     <div class="paths">
-      <div>Minecraft <b>${esc(S.info.version)}</b> (${esc(S.info.profile.loader)}, Paketformat ${S.info.pack.format}) · Profil <b>${esc(S.info.profile.name)}</b> · /thema: <b>${S.info.profile.mod === 'da' ? 'installiert ✓' : esc(S.info.profile.mod)}</b></div>
+      ${S.info.profile ? `<div>Minecraft <b>${esc(S.info.version)}</b> (${esc(S.info.profile.loader)}, Paketformat ${S.info.pack.format}) · Profil <b>${esc(S.info.profile.name)}</b> · /thema: <b>${S.info.profile.mod === 'da' ? 'installiert ✓' : esc(S.info.profile.mod)}</b></div>
       <div>Themen: <b>${esc(S.info.packsDir)}</b></div>
-      <div>Originale aus: <b>${esc(S.info.jar)}</b></div>
+      <div>Originale aus: <b>${esc(S.info.jar)}</b></div>` : ''}
     </div>
     <div class="actions"><button class="btn primary" data-close>Fertig</button></div>`);
   const m = $('#modalRoot .modal');
@@ -2109,7 +2560,9 @@ function bindUi() {
     if (b) { e.stopPropagation(); openColorMenu(b.dataset.rgba.split(',').map(Number), Number(b.dataset.count), b); }
   });
 
-  $('#saveBtn').addEventListener('click', save);
+  $('#saveBtn').addEventListener('click', () => S.skinMode ? exportSkin() : save());
+  bindSkinUi();
+  $('#referenceBtn').addEventListener('click', referenceDialog);
   $('#revertBtn').addEventListener('click', revert);
   $('#growBtn').addEventListener('click', grow);
   $('#undoBtn').addEventListener('click', () => { editor.undo(); renderDocBar(); });
@@ -2126,7 +2579,7 @@ function bindUi() {
   $('#animBtn').addEventListener('click', () => { S.animOpen = !S.animOpen; renderAnimBar(); });
   bindAnimBar();
   $('#kontoBtn').addEventListener('click', () => kontoDialog());
-  $('#kiBtn').addEventListener('click', () => kiDialog().catch((e) => toast(e.message, 'bad')));
+  $('#kiBtn').addEventListener('click', () => S.skinMode ? skinDialog() : kiDialog().catch((e) => toast(e.message, 'bad')));
 
   $('#profileBtn').addEventListener('click', (e) => { e.stopPropagation(); const m = $('#profileMenu'); if (m.hidden) openProfileMenu().catch((er) => toast(er.message, 'bad')); else m.hidden = true; });
   $('#profileMenu').addEventListener('click', async (e) => {
@@ -2184,8 +2637,8 @@ function bindUi() {
     if (isTyping(e) || $('#modalRoot').innerHTML) return;
     const k = e.key.toLowerCase();
     const mod = e.ctrlKey || e.metaKey; // Strg (Windows) bzw. Cmd (Mac)
-    if (mod && k === 's') { e.preventDefault(); save(); return; }
-    const editable = S.doc && S.theme !== 'normal';
+    if (mod && k === 's') { e.preventDefault(); if (S.skinMode) exportSkin(); else save(); return; }
+    const editable = S.doc && !isReadOnly();
     if (editable && (e.key === 'Delete' || e.key === 'Backspace')) { if (editor.deleteSelection()) e.preventDefault(); return; }
     if (editable && e.key === 'Enter') { editor.commitSelection(); return; }
     if (S.doc && mod && k === 'a') { e.preventDefault(); setTool('select'); editor.selectAll(); return; }
@@ -2204,5 +2657,6 @@ function bindUi() {
     if (k === '#') $('#gridBtn').click();
   });
 
+  window.addEventListener('pagehide', () => { if (S.skinMode) saveSkinDraft(); });
   window.addEventListener('beforeunload', (e) => { if (S.drafts.size) { e.preventDefault(); e.returnValue = ''; } });
 }
