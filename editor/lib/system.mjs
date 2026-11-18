@@ -60,6 +60,22 @@ export function javaCommandLines() {
   } catch { return []; }
 }
 
+/** Welcher Prozess lauscht auf diesem Port? { pid, command } oder null. */
+export function portOwner(port) {
+  try {
+    let pid;
+    if (IS_WIN) {
+      pid = Number(execFileSync('powershell', ['-NoProfile', '-Command', `(Get-NetTCPConnection -LocalPort ${Number(port)} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`], { encoding: 'utf8', timeout: 8000 }).trim());
+      if (!pid) return null;
+      const command = execFileSync('powershell', ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: 'utf8', timeout: 8000 }).trim();
+      return { pid, command };
+    }
+    pid = Number(execFileSync('lsof', ['-nP', `-iTCP:${Number(port)}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf8', timeout: 8000 }).trim().split('\n')[0]);
+    if (!pid) return null;
+    return { pid, command: execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8', timeout: 8000 }).trim() };
+  } catch { return null; }
+}
+
 /** App-Fenster starten. Gibt den Kindprozess zurueck (oder null, wenn nur ein Browser-Tab aufging). */
 export function startWindow(url, profileDir, detached) {
   const browser = appBrowser();

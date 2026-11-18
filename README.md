@@ -26,7 +26,9 @@ die man im Spiel mit **`/thema <name>`** umschaltet. Für **Windows und Mac**.
 **Mac** (macOS 13.5 oder neuer, Apple-Chip und Intel): `MinecraftTexturen-<Version>-Mac.zip` laden, entpacken,
 **`Minecraft Texturen.app`** in „Programme“ ziehen und öffnen. Beim ersten Start blockt macOS das (nicht bei Apple
 registriert): Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“. Das Fenster öffnet sich in Chrome,
-Edge oder Brave, sonst im normalen Browser.
+Edge oder Brave, sonst im normalen Browser (Safari geht auch).
+Klappt „Dennoch öffnen“ nicht, im Terminal einmal: `xattr -dr com.apple.quarantine "/Applications/Minecraft Texturen.app"`.
+Läuft noch eine ältere Version im Hintergrund, beendet die neue sie beim Start von selbst.
 
 Node.js ist jeweils schon dabei – nichts installieren.
 
@@ -36,7 +38,12 @@ Node.js ist jeweils schon dabei – nichts installieren.
 ## Was das Programm kann
 
 - **Alle Texturen**: Blöcke, Items, Mobs, Rüstung, GUI, Partikel … mit Suche (versteht auch deutsche Wörter
-  wie „herz“, „schwert“, „schwein“).
+  wie „herz“, „schwert“, „schwein“). Jede Kategorie hat **Unterkategorien zum Aufklappen** (z. B. Blöcke → Erze,
+  Holz, Stein, Pflanzen, Redstone …; Items → Werkzeuge, Waffen, Rüstung, Essen …; Mobs → Feinde, Tiere, Bosse …).
+- **🔮 Verzaubert**: eigene Bilder für verzauberte Items – je Verzauberung (z. B. Schwert mit Schärfe) oder für
+  **zwei zusammen** (Schärfe + Verbrennung = brennende Klinge) oder für „irgendeine Verzauberung“. Das Programm zeigt
+  nur Verzauberungen, die auf das Item passen, und schreibt die Minecraft-Dateien (Item-Definitionen) selbst.
+  Geht ab Minecraft 1.21.5 (1.21.4: nur „irgendeine“), ohne Mod; sichtbar im Inventar, in der Hand und auf dem Boden.
 - **Werkzeuge**: Stift, Schattenpinsel (dunklere Pixel drumherum oder Licht von oben/links), **Muster**
   (zufällige Töne *oder* nur Farben, die du vorher auswählst – mit passenden Farbvorschlägen), Heller,
   Dunkler, Sprühen, Radierer (genau 1 Pixel), Eimer, Verlauf, Linie, Rechteck, Kreis, Umriss, Auswahl,
@@ -75,6 +82,12 @@ Oben auf **🤖 KI**, dann beschreiben, was du willst. Die KI läuft komplett au
 ## Partikel und Animationen mit der KI
 
 Öffne **KI → Partikel & Animation** oder schreib im KI-Fenster zum Beispiel „Partikel mit rotierenden blauen Streifen, 16 Bilder“. Die KI entwirft drei animierte Varianten und zeigt alle Einzelbilder. Im Assistenten kannst du auch das **offene Einzelbild** oder **ein eigenes Bild** verwenden. Dein Motiv bleibt das Startbild und der Assistent erzeugt die folgenden Bilder. Bewegung, Richtung, Bildzahl und Takt lassen sich einstellen.
+
+**🧩 Aus Textur-Teilen bauen:** Gib nur kleine Teile – z. B. eine **Leiste aus 6 Pixeln von Rot nach Orange** (als PNG oder
+direkt im Fenster gebaut) oder ein kleines Funkel-Motiv – und schreib, wie es sich bewegen soll und wofür:
+„**Die Enderperle soll wirbeln**“, „XP-Leiste mit Lauflicht“, „Schwert soll flackern wie Feuer“, „Totem soll funkeln“.
+Die KI baut daraus die fertige Animation (Wirbeln, Farbe läuft durch, Pulsieren, Flackern, Glanz, Funkeln, Aufsteigen) in drei
+Varianten: Umriss bleibt, ganze Textur oder mit Licht und Schatten vom Original.
 
 Speichere das **Sprite-Sheet** als PNG oder lade die Animation in die ausgewählte Textur. Bei Partikeln wählst du ein vorhandenes Minecraft-Sprite als Ziel. Beim Speichern ins Thema schreibt der Editor den Bildstreifen und die Animationsdaten in das Ressourcenpaket.
 
@@ -141,7 +154,10 @@ docs/              Online-Speicher einrichten
 ```
 
 - Start: `cd editor` → `node --no-warnings server.mjs --app` (Node.js ≥ 22.13; Windows, Mac, Linux)
-- Selbsttest: `node --no-warnings tools/selbsttest.mjs`, außerdem `tools/ki-test.mjs`, `tools/zip-test.mjs` und `tools/plattform-test.mjs` (Mac-Ordner simuliert)
+- Selbsttest: `node --no-warnings tools/selbsttest.mjs`, außerdem `tools/ki-test.mjs`, `tools/zip-test.mjs`, `tools/plattform-test.mjs` (Mac-Ordner simuliert),
+  `tools/verzaubert-test.mjs` (Item-Definitionen gegen ein 26.2-Jar), `tools/kategorien-test.mjs`, `tools/teile-test.mjs` (KI aus Textur-Teilen)
+  und `tools/uebernahme-test.mjs` (neue Version löst eine laufende alte ab; fremde Webseiten werden abgewiesen)
+- Erster Start wie auf dem Mac: `node --no-warnings tools/erststart-test.mjs --mac` (Port 47815)
 - Testserver gegen Kopien aller Profile + Supabase-Nachbau: `node --no-warnings tools/testserver.mjs --neu` (Port 47812)
 - Mods bauen: `node mod/tools/baue-alle.mjs` (braucht die jeweiligen Minecraft-Versionen lokal installiert);
   Tests: `mod/test.ps1`, `mod/test-alle.ps1`

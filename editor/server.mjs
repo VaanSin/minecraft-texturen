@@ -12,12 +12,14 @@ import { listProfiles, infoForDir, ensureMod, isRunning, activateInOptions, acti
 import { defaultRoots, scanProfiles, profileByDir, findJar, downloadJar } from './lib/launchers.mjs';
 import { Konto } from './lib/konto.mjs';
 import { writeZip } from './lib/zip.mjs';
-import { dataDir, openFolder, startWindow, IS_WIN } from './lib/system.mjs';
+import { ENCHANT_DE } from './lib/verzaubert.mjs';
+import { dataDir, openFolder, startWindow, portOwner, IS_WIN } from './lib/system.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(HERE, 'public');
 const PORT = Number(process.env.MCT_PORT || 47811);
 const APP_MODE = process.argv.includes('--app');
+const VERSION = JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8')).version;
 const HOME = os.homedir();
 // MCT_DATA / MCT_INSTANCE / MCT_INSTANCES / MCT_INSTALL / MCT_MODRINTH / MCT_LUNAR / MCT_MINECRAFT / MCT_JARS / MCT_DESKTOP:
 // nur fuer Tests mit Kopien statt der echten Profile
@@ -89,7 +91,7 @@ function countVorlagen() {
   return fs.existsSync(dir) ? fs.readdirSync(dir).filter((id) => fs.existsSync(path.join(dir, id, 'vorlage.json'))).length : 0;
 }
 /** Diese Routen gehen auch ohne offenes Profil */
-const WITHOUT_PROFILE = new Set(['/api/info', '/api/profiles', '/api/ping', '/api/profile', '/api/fetch-minecraft', '/api/settings']);
+const WITHOUT_PROFILE = new Set(['/api/info', '/api/profiles', '/api/ping', '/api/quit', '/api/profile', '/api/fetch-minecraft', '/api/settings']);
 
 // ---------- Hilfen ----------
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
@@ -132,10 +134,26 @@ function thumbnail(theme, rel) {
 let lastPing = Date.now();
 
 // ---------- Routen ----------
+/** Nur das eigene Fenster darf das Programm bedienen – keine fremde Webseite (DNS-Rebinding, unterschobene POSTs). */
+const OWN_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
+function foreign(req) {
+  if (!OWN_HOSTS.has(String(req.headers.host || '').toLowerCase())) return 'Falscher Host';
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    const origin = req.headers.origin;
+    if (origin && origin !== 'null' && !OWN_HOSTS.has(origin.replace(/^https?:\/\//, '').toLowerCase())) return 'Fremde Seite';
+    if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return 'Nur JSON';
+  }
+  return null;
+}
+
 async function handle(req, res) {
+  const block = foreign(req);
+  if (block) return send(res, 403, JSON.stringify({ error: block }));
   const url = new URL(req.url, 'http://127.0.0.1');
   const p = decodeURIComponent(url.pathname);
   const q = (k) => url.searchParams.get(k);
+  // Fuer den Start einer neuen Version: Wer laeuft hier schon?
+  if (p === '/api/version') return json(res, { app: 'minecraft-texturen', version: VERSION, appMode: APP_MODE });
   if (!store && /^\/(api|tex|thumb|vorlagen)\//.test(p) &&!WITHOUT_PROFILE.has(p) && !p.startsWith('/api/konto')) throw new Error('Bitte zuerst ein Minecraft-Profil wählen.');
 
   if (p === '/api/profiles') {
@@ -213,6 +231,13 @@ async function handle(req, res) {
   }
   if (p === '/api/list') return json(res, store.list(q('theme')));
   if (p === '/api/pixels') return json(res, store.pixels(q('theme'), q('path')));
+  if (p === '/api/verzaubert') {
+    // Tab "Verzaubert": welche Items welche Verzauberungen bekommen koennen + vorhandene Bilder im Thema
+    const info = store.enchantInfo();
+    const items = {};
+    for (const [it, list] of Object.entries(info.items)) if (store.vanillaSet.has('item/' + it + '.png')) items[it] = info.level === 'alle' ? ['alle'] : list;
+    return json(res, { level: info.level, version, items, names: ENCHANT_DE, variants: store.variants(q('theme')) });
+  }
   if (p.startsWith('/tex/') || p.startsWith('/thumb/')) {
     const [, kind, theme, ...rest] = p.split('/');
     const rel = rest.join('/');
@@ -222,6 +247,13 @@ async function handle(req, res) {
   if (req.method === 'POST') {
     const b = await readBody(req);
     if (p === '/api/ping') { lastPing = Date.now(); return json(res, { ok: true }); }
+    if (p === '/api/quit' && APP_MODE) {
+      // Eine andere Version des Programms wurde gestartet und uebernimmt.
+      console.log(`Beende mich (${VERSION}) – Version ${String(b.version || '?').slice(0, 20)} übernimmt.`);
+      json(res, { ok: true });
+      setTimeout(() => process.exit(0), 200);
+      return;
+    }
     if (p === '/api/save') {
       const data = new Uint8Array(Buffer.from(b.data, 'base64'));
       if (data.length !== b.w * b.h * 4) throw new Error('Bilddaten passen nicht zur Größe');
@@ -321,6 +353,7 @@ const server = http.createServer((req, res) => {
 // ---------- Programmfenster ----------
 // Windows: Edge/Chrome als eigenes Fenster; Mac/Linux: Chrome/Edge/Brave als App-Fenster, sonst der Standardbrowser.
 function openWindow(exitWhenClosed) {
+  if (process.env.MCT_NO_WINDOW) return; // Tests: kein Fenster
   const url = `http://127.0.0.1:${PORT}/`;
   const profile = IS_WIN ? path.join(process.env.LOCALAPPDATA || DATA_DIR, 'MinecraftTexturen', 'fenster') : path.join(DATA_DIR, 'fenster');
   const child = startWindow(url, profile, !exitWhenClosed);
@@ -332,8 +365,33 @@ function openWindow(exitWhenClosed) {
   });
 }
 
-server.on('error', (e) => {
-  if (e.code === 'EADDRINUSE' && APP_MODE) { openWindow(false); setTimeout(() => process.exit(0), 1500); return; }
+/** Port belegt: laeuft dort dieselbe Version, nur ein Fenster dazu oeffnen – eine andere (alte) Version wird abgeloest. */
+async function takeOver() {
+  const base = `http://127.0.0.1:${PORT}`;
+  let other = null;
+  try { other = await (await fetch(base + '/api/version', { signal: AbortSignal.timeout(2500) })).json(); } catch { /* aeltere Version oder etwas Fremdes */ }
+  if (other?.app === 'minecraft-texturen' && other.version === VERSION) return false;
+  let asked = false;
+  if (other?.app === 'minecraft-texturen') {
+    asked = await fetch(base + '/api/quit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: VERSION }), signal: AbortSignal.timeout(2500) }).then((r) => r.ok, () => false);
+  }
+  if (!asked) {
+    // Versionen bis 1.5 kennen /api/quit nicht: den Prozess beenden, wenn er wirklich dieses Programm ist.
+    const owner = portOwner(PORT);
+    if (!owner || !/server\.mjs/.test(owner.command) || !/--app/.test(owner.command)) return false;
+    try { process.kill(owner.pid); } catch { return false; }
+  }
+  console.log(`Andere Version (${other?.version || 'alt'}) läuft noch – sie wird abgelöst.`);
+  return true;
+}
+
+let listenTries = 0;
+server.on('error', async (e) => {
+  if (e.code === 'EADDRINUSE' && APP_MODE) {
+    if (listenTries === 0 && await takeOver().catch(() => false)) listenTries = 1;
+    if (listenTries > 0 && listenTries < 30) { listenTries++; setTimeout(() => server.listen(PORT, '127.0.0.1'), 250); return; }
+    openWindow(false); setTimeout(() => process.exit(0), 1500); return;
+  }
   console.error(e.message);
   process.exit(1);
 });

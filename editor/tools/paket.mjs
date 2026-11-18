@@ -61,6 +61,11 @@ Partikel und Animation:
   Unter "KI" -> "Partikel & Animation" ein Motiv beschreiben oder ein eigenes Bild auswählen.
   Beispiel: "Partikel mit rotierenden blauen Streifen". Die Bilder lassen sich als
   Sprite-Sheet exportieren oder in eine ausgewählte Minecraft-Textur übernehmen.
+  Aus Textur-Teilen: z. B. eine Leiste aus 6 Pixeln von Rot nach Orange geben und schreiben
+  "Die Enderperle soll wirbeln" - die KI baut die fertige Animation.
+
+Verzaubert (ab Minecraft 1.21.4):
+  Links "Verzaubert" -> ein Item anklicken -> eine oder zwei Verzauberungen wählen -> malen -> Speichern.
 
 Eigener Java-Skin:
   1. Oben "Skins" wählen und selbst malen, ein PNG öffnen oder "Mit KI erstellen" wählen.
@@ -199,6 +204,8 @@ So geht's:
   3. "Speichern" -> Profil wählen. Fertig.
   Im Spiel: /thema <name> zum Wechseln, /thema normal für die Originale.
 
+Neue Version: einfach die neue App starten - eine ältere, die noch im Hintergrund läuft,
+wird dabei von selbst beendet.
 Das Programm beendet sich von selbst ein paar Minuten nachdem das Fenster zu ist.
 Einstellungen: ~/Library/Application Support/MinecraftTexturen
 Protokoll bei Problemen: ~/Library/Logs/MinecraftTexturen.log

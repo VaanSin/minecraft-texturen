@@ -8,6 +8,8 @@ import { parsePrompt, drafts as kiDrafts, styleFromPalette, paletteFromImage, pi
 import { frameCount, frameHeight, getFrame, joinFrames, canAnimate, speedText, EFFECTS, makeEffect, blend, timeline, sheetLayouts, framesFromSheet, toSheet } from './animation.js';
 
 import { MOTION_EFFECTS, wantsParticleWizard, parseMotionPrompt, motionDrafts } from './motion.js';
+import { groupsFor, enchantGroups, variantInfo } from './kategorien.js';
+import { PIECE_MOTIONS, pieceMotionFromText, analyzePiece, rampFrom, pieceDrafts } from './teile.js';
 import { SKIN_SIZE, MAX_SKIN_FRAMES, SKIN_ANIM_NOTE, skinFaces, blankSkin, launcherSkin, changeSkinModel, expandLegacySkin, skinFront } from './skin.js';
 
 const $ = (s) => document.querySelector(s);
@@ -27,11 +29,13 @@ const S = {
   opt: { size: 1, strength: 0.16, shadeMode: 'ring', filled: false, gradEnd: 'dark', outlineAuto: true, mirrorX: false, mirrorY: false, noiseMode: 'zufall', noiseColors: [] },
   thumbVer: new Map(), globalVer: 0,
   warnCollapsed: false,
+  openGroups: new Set(), ench: null,
 };
 
 const CATS = [
   { id: 'block', name: 'Blöcke', icon: '🧱', c: '#ff9a3c', test: (p) => p.startsWith('block/') || p.startsWith('blocks/') },
-  { id: 'item', name: 'Items', icon: '⚔️', c: '#ff4fd8', test: (p) => p.startsWith('item/') || p.startsWith('items/') },
+  { id: 'item', name: 'Items', icon: '⚔️', c: '#ff4fd8', test: (p) => (p.startsWith('item/') && !p.startsWith('item/verzaubert/')) || p.startsWith('items/') },
+  { id: 'enchant', name: 'Verzaubert', icon: '🔮', c: '#c084fc', test: (p) => p.startsWith('item/verzaubert/') || !!S.ench?.items[p.match(/^item\/([a-z0-9_]+)\.png$/)?.[1]] },
   { id: 'mob', name: 'Mobs', icon: '🐷', c: '#5cff7a', test: (p) => p.startsWith('entity/') && !p.startsWith('entity/equipment/') },
   { id: 'armor', name: 'Rüstung', icon: '🛡️', c: '#3cc8ff', test: (p) => p.startsWith('entity/equipment/') || p.startsWith('trims/') || p.startsWith('models/armor/') },
   { id: 'gui', name: 'GUI & HUD', icon: '❤️', c: '#8f6bff', test: (p) => p.startsWith('gui/') },
@@ -100,6 +104,7 @@ init().catch((e) => toast('Start fehlgeschlagen: ' + e.message, 'bad'));
 
 async function init() {
   S.info = await get('/api/info');
+  S.openGroups = loadOpenGroups();
   if (S.info.setup && await setupDialog()) S.info = await get('/api/info');
   selectLastTheme();
   editor.setGrid(S.info.settings.showGrid);
@@ -135,6 +140,7 @@ async function loadList() {
   S.textures = l.textures;
   S.changed = new Set(l.changed);
   S.animated = new Set(l.animated);
+  S.ench = await get('/api/verzaubert?theme=' + S.theme).catch(() => null);
   renderCats();
   renderGrid();
 }
@@ -144,6 +150,7 @@ function renderCats() {
   $('#cats').innerHTML = CATS.map((c) => {
     const n = S.textures.filter(c.test).length;
     if (c.id === 'changed' && S.theme === 'normal') return '';
+    if (c.id === 'enchant' && !n) return '';
     if (c.id === 'drafts' && !n) { if (S.cat === 'drafts') S.cat = 'changed'; return ''; }
     return `<button class="cat ${S.cat === c.id ? 'active' : ''}" data-cat="${c.id}" style="--c:${c.c}">${c.icon} ${c.name} <span class="n">${n}</span></button>`;
   }).join('');
@@ -157,21 +164,39 @@ function matchesSearch(p) {
 }
 
 let gridItems = [], gridShown = 0, gridObserver = null;
-function renderGrid() {
+function renderGrid(keepScroll = false) {
   const cat = CATS.find((c) => c.id === S.cat) || CATS[0];
   // auch neue Zusatz-Texturen (z. B. Krempe), die es erst als Entwurf gibt
   const all = S.drafts.size ? [...new Set([...S.textures, ...S.drafts.keys()])].sort() : S.textures;
   const list = all.filter((p) => (S.search ? true : cat.test(p)) && matchesSearch(p));
   gridItems = [];
-  let lastDir = null;
-  for (const p of list) {
-    const dir = p.split('/').slice(0, -1).join('/');
-    if (dir !== lastDir) { gridItems.push({ head: dir }); lastDir = dir; }
-    gridItems.push({ p });
+  const pushTiles = (paths, heads = true) => {
+    let lastDir = null;
+    for (const p of paths) {
+      const dir = p.split('/').slice(0, -1).join('/');
+      if (heads && dir !== lastDir) { gridItems.push({ head: dir }); lastDir = dir; }
+      gridItems.push({ p });
+    }
+  };
+  // Unterkategorien zum Aufklappen (nicht beim Suchen: dann alles gleich sehen)
+  let groups = null;
+  if (!S.search) {
+    if (S.cat === 'enchant') groups = enchantGroups(Object.keys(S.ench?.items || {}), list.map((p) => { const v = variantInfo(p); return v && { ...v, rel: p }; }).filter(Boolean));
+    else groups = groupsFor(S.cat, list, CATS.filter((c) => !['drafts', 'changed', 'all', 'enchant'].includes(c.id)));
   }
+  if (groups) {
+    gridItems.push({ tools: true });
+    if (S.cat === 'enchant') gridItems.push({ note: true });
+    for (const g of groups) {
+      const key = S.cat + ':' + g.id;
+      const open = S.openGroups.has(key);
+      gridItems.push({ group: g, key, open });
+      if (open) pushTiles(g.paths, S.cat !== 'enchant' && S.cat !== 'all' && new Set(g.paths.map((p) => p.split('/').slice(0, -1).join('/'))).size > 1);
+    }
+  } else pushTiles(list);
   const grid = $('#grid');
   grid.innerHTML = '';
-  grid.scrollTop = 0;
+  if (!keepScroll) grid.scrollTop = 0;
   gridShown = 0;
   $('#gridCount').textContent = list.length ? `${list.length} Texturen${S.search ? ' gefunden' : ''}` : 'Nichts gefunden 🤷';
   gridObserver?.disconnect();
@@ -186,6 +211,24 @@ function moreTiles() {
   const frag = document.createDocumentFragment();
   for (let i = gridShown; i < end; i++) {
     const it = gridItems[i];
+    if (it.tools) {
+      const d = document.createElement('div');
+      d.className = 'group-tools';
+      d.innerHTML = '<button class="btn small ghost" data-groups="open">▾ Alle aufklappen</button><button class="btn small ghost" data-groups="close">▸ Alle zuklappen</button>';
+      frag.appendChild(d);
+      continue;
+    }
+    if (it.note) {
+      const d = document.createElement('div');
+      d.className = 'group-note';
+      const lv = S.ench?.level;
+      d.textContent = lv === 'voll' ? '🔮 Klick auf ein Item: eigenes Bild für eine Verzauberung oder für zwei zusammen anlegen.'
+        : lv === 'alle' ? '🔮 In Minecraft 1.21.4 geht nur ein Bild für „irgendeine Verzauberung“. Ab 1.21.5 auch je Verzauberung.'
+          : '🔮 Verzauberte Item-Bilder gehen ohne Mod erst ab Minecraft 1.21.4.';
+      frag.appendChild(d);
+      continue;
+    }
+    if (it.group) { frag.appendChild(groupHead(it)); continue; }
     if (it.head !== undefined) {
       const h = document.createElement('div');
       h.className = 'group-head';
@@ -215,11 +258,55 @@ function tileFor(p) {
   t.className = 'tile' + (S.doc?.path === p ? ' active' : '') + (draft ? ' unsaved' : '');
   t.dataset.p = p;
   t.title = p + (draft ? ' – noch nicht gespeichert' : '');
-  const name = p.split('/').pop().replace(/\.png$/, '').replace(/_/g, ' ');
+  const vi = variantInfo(p);
+  const name = vi ? enchantNames(vi.enchants) : p.split('/').pop().replace(/\.png$/, '').replace(/_/g, ' ');
+  if (vi) t.classList.add('variant');
   // Ungespeicherte Texturen zeigen ihren aktuellen Stand statt der gespeicherten Datei
   const src = draft ? draftThumb(draft) : thumbUrl(p);
-  t.innerHTML = `<img loading="lazy" src="${src}" alt="">${S.changed.has(p) ? '<span class="mark" title="In diesem Thema geändert"></span>' : ''}${draft ? '<span class="draft" title="Noch nicht gespeichert">✏️</span>' : ''}${S.animated.has(p) ? '<span class="anim" title="Animiert">▶</span>' : ''}<div class="label">${esc(name)}</div>`;
+  t.innerHTML = `<img loading="lazy" src="${src}" alt="">${S.changed.has(p) ? '<span class="mark" title="In diesem Thema geändert"></span>' : ''}${draft ? '<span class="draft" title="Noch nicht gespeichert">✏️</span>' : ''}${S.animated.has(p) ? '<span class="anim" title="Animiert">▶</span>' : ''}${vi ? '<span class="ench" title="Bild für verzaubertes Item">🔮</span>' : ''}<div class="label">${esc(name)}</div>`;
   return t;
+}
+
+/** Kopf einer Unterkategorie: Klick klappt auf/zu; zugeklappt mit kleiner Vorschau. */
+function groupHead(it) {
+  const g = it.group;
+  const h = document.createElement('button');
+  h.className = 'sub-head' + (it.open ? ' open' : '');
+  h.dataset.group = it.key;
+  const isVar = (p) => p.startsWith('item/verzaubert/');
+  const items = g.paths.filter((p) => !isVar(p));
+  const extra = g.paths.length - items.length;
+  const changed = items.filter((p) => S.changed.has(p) || S.drafts.has(p)).length;
+  const minis = it.open ? '' : items.slice(0, 6).map((p) => '<img loading="lazy" alt="" src="' + (S.drafts.has(p) ? draftThumb(S.drafts.get(p)) : thumbUrl(p)) + '">').join('');
+  h.innerHTML = '<span class="caret">▸</span><span class="sico">' + g.icon + '</span><span class="sname">' + esc(g.name) + '</span>'
+    + '<span class="n">' + items.length + '</span>'
+    + (extra ? '<span class="n ench" title="Verzauberte Bilder">🔮 ' + extra + '</span>' : '')
+    + (changed ? '<span class="n chg" title="Im Thema geändert">🟢 ' + changed + '</span>' : '')
+    + '<span class="minis">' + minis + '</span>';
+  return h;
+}
+
+/** Unterkategorie auf-/zuklappen und den Kopf im Blick behalten. */
+function toggleGroup(key) {
+  if (S.openGroups.has(key)) S.openGroups.delete(key); else S.openGroups.add(key);
+  saveOpenGroups();
+  renderGrid(true);
+  const idx = gridItems.findIndex((x) => x.key === key);
+  while (gridShown <= idx && gridShown < gridItems.length) moreTiles();
+  $('#grid').querySelector(`.sub-head[data-group="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+
+function setAllGroups(open) {
+  for (const it of gridItems) if (it.key) { if (open) S.openGroups.add(it.key); else S.openGroups.delete(it.key); }
+  saveOpenGroups();
+  renderGrid(true);
+}
+
+function saveOpenGroups() {
+  try { localStorage.setItem('mct-offen', JSON.stringify([...S.openGroups])); } catch { /* nur Bequemlichkeit */ }
+}
+function loadOpenGroups() {
+  try { return new Set(JSON.parse(localStorage.getItem('mct-offen') || '[]')); } catch { return new Set(); }
 }
 
 function draftThumb(d) {
@@ -311,7 +398,12 @@ function texSource(path) {
   return { url: `/tex/${S.theme}/${path.split('/').map(encodeURIComponent).join('/')}?v=${S.globalVer}.${S.thumbVer.get(path) || 0}` };
 }
 
-const prettyName = (p) => p.split('/').pop().replace(/\.png$/, '').replace(/_/g, ' ');
+const prettyName = (p) => {
+  const v = variantInfo(p);
+  if (v) return v.item.replace(/_/g, ' ') + ' · ' + enchantNames(v.enchants);
+  return p.split('/').pop().replace(/\.png$/, '').replace(/_/g, ' ');
+};
+const enchantNames = (list) => list.map((e) => S.ench?.names?.[e] || e.replace(/_/g, ' ')).join(' + ');
 
 function renderDocBar() {
   const d = S.doc;
@@ -398,7 +490,7 @@ async function save() {
       if (target !== S.info.profile.id && !(await switchProfile(target, { keepDoc: true, bring: 'copy' }))) return false;
       S.profileConfirmed = true;
     }
-    let done = 0, lastMod = null, profile = S.info.profile.name;
+    let done = 0, lastMod = null, profile = S.info.profile.name, added = false;
     const failed = [];
     for (const d of drafts) {
       $('#saveBtn').innerHTML = `<span class="spinner"></span> ${drafts.length > 1 ? `${done + 1}/${drafts.length}` : 'Speichern'}`;
@@ -408,13 +500,14 @@ async function save() {
         d.dirty = false; d.source = 'thema'; d.animDirty = false;
         S.drafts.delete(d.path);
         S.changed.add(d.path);
-        if (!S.textures.includes(d.path)) { S.textures.push(d.path); S.textures.sort(); } // neue Zusatz-Textur
+        if (!S.textures.includes(d.path)) { S.textures.push(d.path); S.textures.sort(); added = true; } // neue Zusatz-Textur
         S.thumbVer.set(d.path, (S.thumbVer.get(d.path) || 0) + 1);
         refreshTile(d.path);
         lastMod = r.mod; profile = r.profile; done++;
       } catch (e) { failed.push(`${prettyName(d.path)}: ${e.message}`); }
     }
     renderCats();
+    if (added) renderGrid(true); // z. B. neues verzaubertes Bild: Kachel zeigen
     if (lastMod?.state === 'installiert') S.info.profile.mod = 'da';
     if (done) toast(`💾 ${done === 1 ? `„${esc(prettyName(drafts.find((d) => !S.drafts.has(d.path)).path))}“` : `${done} Texturen`} gespeichert in „${esc(profile)}“ · Thema „${esc(themeName())}“${modText(lastMod)} – im Spiel <b>F3+T</b> drücken`, 'ok');
     if (failed.length) toast('Nicht gespeichert: ' + failed.map(esc).join(' · '), 'bad');
@@ -627,6 +720,8 @@ async function revert() {
     renderDocBar();
     return;
   }
+  const vi = variantInfo(d.path);
+  if (vi) { await removeVariant(d.path); return; }
   const ok = await choose('Zurück zum Original?', `<b>${esc(prettyName(d.path))}</b> wird im Thema „${esc(themeName())}“ wieder wie bei Minecraft. Deine Version wird gelöscht.`, [{ v: 'yes', t: '♻️ Ja, Original', cls: 'danger' }, { v: 'no', t: 'Abbrechen', cls: 'ghost' }]);
   if (ok !== 'yes') return;
   await post('/api/revert', { theme: S.theme, path: d.path });
@@ -636,6 +731,81 @@ async function revert() {
   renderCats();
   await openTexture(d.path, true);
   toast('♻️ Wieder Original', 'ok');
+}
+
+// ---------- Verzauberte Items ----------
+/** Fenster im Tab "Verzaubert": eine oder zwei Verzauberungen waehlen, dann das Bild dafuer malen. */
+function enchantDialog(p) {
+  const item = p.match(/^item\/([a-z0-9_]+)\.png$/)?.[1];
+  const E = S.ench;
+  if (!item || !E) { openTexture(p); return; }
+  const allowed = E.items[item] || [];
+  const all = [...new Set([...S.textures, ...S.drafts.keys()])];
+  const have = all.filter((x) => variantInfo(x)?.item === item).sort();
+  const nice = item.replace(/_/g, ' ');
+  const lvNote = !E.level ? `<p class="hint warn">⚠️ In Minecraft ${esc(E.version)} geht das ohne Mod noch nicht – erst ab 1.21.4. Du kannst trotzdem malen, aber speichern geht erst in einem neueren Profil.</p>`
+    : E.level === 'alle' ? '<p class="hint">In Minecraft 1.21.4 kann das Spiel nur „irgendeine Verzauberung“ erkennen. Ab 1.21.5 geht es je Verzauberung.</p>' : '';
+  const thumbOf = (x) => (S.drafts.has(x) ? draftThumb(S.drafts.get(x)) : thumbUrl(x));
+  const m = openModal(`
+    <h2>🔮 Verzaubertes Item: ${esc(nice)}</h2>
+    <div class="ench-top"><img class="ench-icon" src="${thumbUrl(p)}" alt="">
+      <p>Wähle <b>eine</b> Verzauberung – oder <b>zwei</b>: Dann gilt das Bild nur, wenn das Item beide hat (z. B. Schärfe + Verbrennung = brennende Klinge). Du siehst es im Inventar, in der Hand und auf dem Boden; der Verzauberungs-Glanz bleibt.</p></div>
+    ${lvNote}
+    <div class="ench-chips">${allowed.map((e) => `<button class="chip${e === 'alle' ? ' any' : ''}" data-e="${e}">${e === 'alle' ? '✨ ' : ''}${esc(E.names[e] || e)}</button>`).join('')}</div>
+    <p class="ench-sel" id="eSel">Noch nichts gewählt.</p>
+    ${have.length ? `<h3>Schon angelegt</h3><div class="ench-have">${have.map((v) => `<div class="ench-row"><img src="${thumbOf(v)}" alt=""><span>${esc(enchantNames(variantInfo(v).enchants))}${S.drafts.has(v) ? ' <i>(nicht gespeichert)</i>' : ''}</span><button class="btn small" data-open="${esc(v)}">✏️ Öffnen</button><button class="btn small ghost" data-del="${esc(v)}" title="Bild löschen">🗑️</button></div>`).join('')}</div>` : ''}
+    <div class="actions"><button class="btn ghost" data-base>Normales Item öffnen</button><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="eGo" disabled>🖌️ Anlegen &amp; malen</button></div>`);
+  m.classList.add('ench-modal');
+  let pick = [];
+  const target = () => (pick.length ? `item/verzaubert/${item}-${[...pick].sort().join('-')}.png` : null);
+  const update = () => {
+    m.querySelectorAll('[data-e]').forEach((b) => b.classList.toggle('on', pick.includes(b.dataset.e)));
+    const t = target();
+    const exists = t && have.includes(t);
+    m.querySelector('#eSel').innerHTML = !pick.length ? 'Noch nichts gewählt.'
+      : `Bild für <b>${esc(nice)}</b> mit <b>${esc(enchantNames(pick))}</b>${pick.length === 2 ? ' (beide zusammen)' : ''}${exists ? ' – gibt es schon' : ''}`;
+    const go = m.querySelector('#eGo');
+    go.disabled = !pick.length;
+    go.textContent = exists ? '✏️ Öffnen' : '🖌️ Anlegen & malen';
+  };
+  m.addEventListener('click', async (e) => {
+    const c = e.target.closest('[data-e]');
+    if (c) {
+      const id = c.dataset.e;
+      if (pick.includes(id)) pick = pick.filter((x) => x !== id);
+      else if (id === 'alle') pick = ['alle'];
+      else pick = [...pick.filter((x) => x !== 'alle'), id].slice(-2);
+      update();
+      return;
+    }
+    if (e.target.closest('[data-base]')) { closeModal(); openTexture(p); return; }
+    const o = e.target.closest('[data-open]');
+    if (o) { closeModal(); openTexture(o.dataset.open); return; }
+    const d = e.target.closest('[data-del]');
+    if (d) { closeModal(); await removeVariant(d.dataset.del); enchantDialog(p); return; }
+    if (e.target.closest('#eGo')) {
+      const t = target();
+      closeModal();
+      await openTexture(t);
+      if (S.doc?.path === t && S.doc.source === 'basis') toast(`🔮 Startet mit dem normalen Bild. Jetzt malen, dann <b>💾 Speichern</b> – das Programm schreibt die Minecraft-Dateien dafür selbst.`, 'ok');
+    }
+  });
+}
+
+/** Verzaubertes Bild loeschen (gespeichert oder nur Entwurf). */
+async function removeVariant(v) {
+  const saved = S.changed.has(v);
+  const ok = await choose('Bild löschen?', `Das Bild für <b>${esc(prettyName(v))}</b> wird gelöscht. Das Item sieht dann verzaubert wieder normal aus.`, [{ v: 'yes', t: '🗑️ Löschen', cls: 'danger' }, { v: 'no', t: 'Abbrechen', cls: 'ghost' }]);
+  if (ok !== 'yes') return;
+  if (saved) await post('/api/revert', { theme: S.theme, path: v });
+  S.drafts.delete(v);
+  S.changed.delete(v);
+  S.textures = S.textures.filter((x) => x !== v);
+  if (S.doc?.path === v) await openTexture(`item/${variantInfo(v).item}.png`, true);
+  renderCats();
+  renderGrid(true);
+  renderDocBar();
+  toast('🗑️ Verzaubertes Bild gelöscht', 'ok');
 }
 
 // ---------- Mehr Pixel ----------
@@ -1552,12 +1722,21 @@ async function kiDialog() {
     <div id="kiPlan" class="ki-plan"></div>
     <div class="actions"><button class="btn" id="kiForMotion">✨ Partikel &amp; Animation</button><button class="btn" id="kiForSkin">👤 Einen Skin erstellen</button><button class="btn ghost" data-close>Abbrechen</button><button class="btn primary" id="kiGo">✨ Los geht's</button></div>`);
   const text = m.querySelector('#kiText');
-  const motionPrompt = (plan) => wantsParticleWizard(text.value) || (!plan.targets.length && parseMotionPrompt(text.value).explicitEffect);
+  const motionPrompt = (plan) => wantsParticleWizard(text.value) || (!plan.targets.length && parseMotionPrompt(text.value).explicitEffect)
+    || (plan.targets.length > 0 && !plan.animate && !!pieceMotionFromText(text.value)) // "Enderperle soll wirbeln"
+    || (!!kiImage && kiImage.img.width * kiImage.img.height <= 32 * 32 && plan.targets.length > 0); // kleines Teil + Ziel
   const openMotion = () => {
     const prompt = text.value.trim();
     const image = kiImage ? { name: kiImage.name, data: kiImage.img.data, w: kiImage.img.width, h: kiImage.img.height } : null;
-    const target = wantsParticleWizard(prompt) ? null : kiPlan(prompt).targets.find((p) => canAnimate(p).ok);
+    const plan = kiPlan(prompt);
+    const target = wantsParticleWizard(prompt) ? null : plan.targets.find((p) => canAnimate(p).ok);
+    // Kleines Bild (Leiste, Motiv) oder "soll wirbeln/flackern ..." mit Ziel: aus Teilen bauen
+    const small = kiImage && (Math.min(kiImage.img.width, kiImage.img.height) <= 2 || kiImage.img.width * kiImage.img.height <= 32 * 32);
+    const pieces = [];
+    if (small) pieces.push(analyzePiece({ w: kiImage.img.width, h: kiImage.img.height, data: kiImage.img.data }, kiImage.name));
+    else if (plan.style && !plan.style.keepColors && pieceMotionFromText(prompt)) pieces.push(analyzePiece({ w: 6, h: 1, data: new Uint8ClampedArray(rampFrom(fromHex(plan.style.colors.main), fromHex(plan.style.colors.second), 6).flat()) }, 'Farben aus dem Text'));
     closeModal();
+    if (target && (small || pieceMotionFromText(prompt))) { animationKiDialog({ prompt, source: 'pieces', pieces, target, targetTouched: false }); return; }
     animationKiDialog({ prompt: prompt || undefined, image, source: image ? 'image' : 'generated', target });
   };
   m.querySelector('#kiForMotion').onclick = openMotion;
@@ -1660,8 +1839,17 @@ function animationKiDialog(options = {}) {
         <option value="generated">KI entwirft das Motiv und alle Bilder</option>
         <option value="current" ${current ? '' : 'disabled'}>Offenes Einzelbild animieren</option>
         <option value="image">Eigenes Bild animieren</option>
+        <option value="pieces">🧩 Aus Textur-Teilen bauen (Farbleiste, kleines Motiv)</option>
       </select>
     </label>
+    <div id="motionPiecesRow" class="pieces" hidden>
+      <div class="row"><label class="btn small">🧩 Teil öffnen<input type="file" id="motionPieceFile" accept="image/*" multiple hidden></label>
+        <span class="muted">oder hineinziehen – z. B. eine Leiste aus 6 Pixeln von Rot nach Orange</span></div>
+      <div class="row ramp-maker">🎨 Leiste bauen: <input type="color" id="rampA" value="#ff0000"> → <input type="color" id="rampB" value="#ffa500">
+        <input type="number" id="rampN" min="2" max="16" value="6" title="Wie viele Farben"> Farben <button class="btn small" id="rampAdd">＋ Als Teil nehmen</button></div>
+      <div id="motionPieces" class="piece-list"></div>
+      <div class="ki-opts"><span class="lbl">Bewegung</span><button class="chip" data-pm="">aus dem Text</button>${PIECE_MOTIONS.map((x) => `<button class="chip" data-pm="${x.id}">${x.icon} ${x.name}</button>`).join('')}</div>
+    </div>
     <div id="motionImageRow" class="row" hidden>
       <label class="btn small">📂 Bild öffnen<input type="file" id="motionFile" accept="image/*" hidden></label>
       <span id="motionImageInfo" class="muted"></span>
@@ -1686,6 +1874,7 @@ function animationKiDialog(options = {}) {
     </div>
     <label class="field">Ziel für die Übernahme
       <select id="motionTarget"><option value="">Nur Sprite-Sheet exportieren</option>
+        <optgroup id="motionTextTargets" label="Aus deinem Text"></optgroup>
         ${extra.length ? `<optgroup label="Weitere Texturen">${targetOptions(extra)}</optgroup>` : ''}
         ${partPaths.length ? `<optgroup label="Minecraft-Partikel">${targetOptions(partPaths)}</optgroup>` : ''}
       </select>
@@ -1697,9 +1886,51 @@ function animationKiDialog(options = {}) {
   const bindings = { Text: 'prompt', Source: 'source', Effect: 'effect', Dir: 'dir', Size: 'size', Images: 'images', Ticks: 'ticks', Target: 'target' };
   for (const [id, key] of Object.entries(bindings)) select(id).value = state[key];
   let settings, loadingFile = false;
+  const piecesMode = () => state.source === 'pieces';
+  const fillTextTargets = () => {
+    // Ziele aus dem Text (z. B. "Enderperle") – fuer Teile ist jede animierbare Textur moeglich
+    const found = parsePrompt(state.prompt || '', new Set(S.textures), S.doc?.path || null).targets.filter((p) => canAnimate(p).ok).slice(0, 8);
+    const grp = select('TextTargets');
+    const key = found.join('|');
+    if (grp.dataset.key !== key) { grp.innerHTML = targetOptions(found); grp.dataset.key = key; }
+    if (piecesMode() && !state.targetTouched && found.length && select('Target').value !== found[0]) select('Target').value = found[0];
+    if (piecesMode() && !select('Target').value && openDoc && canAnimate(openDoc.path).ok && !state.targetTouched) {
+      if (![...select('Target').options].some((o) => o.value === openDoc.path)) grp.insertAdjacentHTML('beforeend', targetOptions([openDoc.path]));
+      select('Target').value = openDoc.path;
+    }
+  };
+  const renderPieces = () => {
+    select('Pieces').innerHTML = (state.pieces || []).map((p, i) => {
+      const cv = document.createElement('canvas');
+      drawFrame(cv, p.data, p.w, p.h, p.kind === 'ramp' ? 96 : 40, p.kind === 'ramp' ? 16 : 40);
+      return `<span class="piece"><img src="${cv.toDataURL()}" alt=""><span>${p.kind === 'ramp' ? `Farbverlauf · ${p.colors.length} Farben` : `Motiv ${p.w}×${p.h}`}</span><button class="iconbtn sm" data-pdel="${i}" title="Teil entfernen">✕</button></span>`;
+    }).join('') || '<span class="muted">Noch kein Teil – ohne Teil nimmt die KI die Farben der Textur.</span>';
+    m.querySelectorAll('[data-pm]').forEach((b) => b.classList.toggle('on', b.dataset.pm === (state.pieceMotion || '')));
+  };
   const update = () => {
     for (const [id, key] of Object.entries(bindings)) state[key] = select(id).value;
     S.motionPrompt = state.prompt;
+    fillTextTargets();
+    state.target = select('Target').value;
+    select('PiecesRow').hidden = !piecesMode();
+    select('Effect').closest('label').hidden = piecesMode();
+    select('Size').closest('label').hidden = piecesMode();
+    if (piecesMode()) {
+      renderPieces();
+      const pm = PIECE_MOTIONS.find((x) => x.id === (state.pieceMotion || pieceMotionFromText(state.prompt) || 'swirl'));
+      const images = Number(state.images) || parseMotionPrompt(state.prompt).frames || pm.frames;
+      const ticks = Number(state.ticks) || parseMotionPrompt(state.prompt).ticks || pm.ticks;
+      const dir = state.dir || parseMotionPrompt(state.prompt).dir;
+      select('Dir').disabled = pm.id !== 'swirl' && pm.id !== 'cycle';
+      select('Images').placeholder = images;
+      select('Ticks').placeholder = ticks;
+      const n = (state.pieces || []).length;
+      select('Plan').innerHTML = `<div><b>${pm.icon} ${pm.name}</b> · ${images} Bilder · ${ticks} ${ticks === 1 ? 'Tick' : 'Ticks'} pro Bild · ${n ? `${n} ${n === 1 ? 'Teil' : 'Teile'}` : 'Farben der Textur'}</div>
+        <div class="hint">${state.target ? `🎯 Ziel: <b>${esc(prettyName(state.target))}</b> – die KI baut die fertige Animation daraus.` : '🎯 Sag im Text, wofür (z. B. „die Enderperle soll wirbeln“) oder wähle unten ein Ziel.'}</div>`;
+      select('Go').disabled = !state.target || loadingFile || !select('Images').validity.valid || !select('Ticks').validity.valid;
+      settings = { pieces: true, motion: pm.id, effectName: pm.name, images, ticks, dir };
+      return;
+    }
     const plan = parseMotionPrompt(state.prompt);
     const generated = state.source === 'generated';
     const source = state.source === 'current' ? current : state.source === 'image' ? state.image : null;
@@ -1745,23 +1976,60 @@ function animationKiDialog(options = {}) {
   select('File').addEventListener('change', (e) => { readSprite(e.target.files[0]); e.target.value = ''; });
   m.addEventListener('dragover', (e) => { e.preventDefault(); m.classList.add('drop'); });
   m.addEventListener('dragleave', () => m.classList.remove('drop'));
-  m.addEventListener('drop', (e) => { e.preventDefault(); m.classList.remove('drop'); readSprite(e.dataTransfer.files[0]); });
-  select('Go').addEventListener('click', () => {
+  m.addEventListener('drop', (e) => { e.preventDefault(); m.classList.remove('drop'); if (state.source === 'pieces') addPieceFiles(e.dataTransfer.files); else readSprite(e.dataTransfer.files[0]); });
+  select('Go').addEventListener('click', async () => {
     try {
+      if (settings.pieces) {
+        // Zieltextur (so wie sie gerade im Thema/Entwurf aussieht), erstes Einzelbild
+        const doc = S.drafts.get(state.target) || (S.doc?.path === state.target ? S.doc : await loadDoc(state.target));
+        const base = { w: doc.w, h: frameHeight(doc), data: getFrame(doc, 0) };
+        const drafts = pieceDrafts({ base, pieces: state.pieces || [], motion: settings.motion, frames: settings.images, ticks: settings.ticks, dir: settings.dir });
+        closeModal();
+        animationKiResults(drafts, state, settings);
+        return;
+      }
       const drafts = motionDrafts(settings);
       closeModal();
       animationKiResults(drafts, state, settings);
     } catch (e) { toast(esc(e.message), 'bad'); }
+  });
+  // Teile: Dateien, Leiste bauen, entfernen, Bewegung waehlen
+  const addPieceFiles = async (files) => {
+    for (const file of [...files]) {
+      if (!file?.type.startsWith('image/')) continue;
+      try {
+        const img = await readImageFile(file);
+        if (img.width * img.height > 128 * 128) { toast('Teile sollten klein sein (höchstens 128×128) – für große Bilder „Eigenes Bild animieren“ nehmen.', 'bad'); continue; }
+        (state.pieces ||= []).push(analyzePiece({ w: img.width, h: img.height, data: img.data }, file.name));
+      } catch (e) { toast('Teil ging nicht: ' + esc(e.message), 'bad'); }
+    }
+    if (m.isConnected) update();
+  };
+  select('PieceFile').addEventListener('change', (e) => { addPieceFiles(e.target.files); e.target.value = ''; });
+  select('Target').addEventListener('change', () => { state.targetTouched = true; });
+  m.addEventListener('click', (e) => {
+    if (e.target.closest('#rampAdd')) {
+      const hx = (v) => [1, 3, 5].map((i) => parseInt(v.slice(i, i + 2), 16));
+      const colors = rampFrom(hx(m.querySelector('#rampA').value), hx(m.querySelector('#rampB').value), Number(m.querySelector('#rampN').value) || 6);
+      (state.pieces ||= []).unshift(analyzePiece({ w: colors.length, h: 1, data: new Uint8ClampedArray(colors.flat()) }, 'Leiste'));
+      update();
+      return;
+    }
+    const del = e.target.closest('[data-pdel]');
+    if (del) { state.pieces.splice(Number(del.dataset.pdel), 1); update(); return; }
+    const pm = e.target.closest('[data-pm]');
+    if (pm) { state.pieceMotion = pm.dataset.pm || null; update(); }
   });
   update();
   select('Text').focus();
 }
 
 function animationKiResults(drafts, state, settings) {
-  const effectName = MOTION_EFFECTS.find((e) => e.id === settings.effect).name;
+  const effectName = settings.effectName || MOTION_EFFECTS.find((e) => e.id === settings.effect).name;
   const m = openModal(`
     <h2>🎬 ${effectName} · ${settings.images} Einzelbilder</h2>
-    <p>${settings.source ? 'Dein Sprite ist das erste Bild. Die KI hat daraus die weiteren Einzelbilder erzeugt.'
+    <p>${settings.pieces ? `Aus deinen Teilen gebaut – für <b>${esc(prettyName(state.target))}</b>. Alle drei laufen als Endlosschleife; „In Textur laden“ übernimmt sie.`
+      : settings.source ? 'Dein Sprite ist das erste Bild. Die KI hat daraus die weiteren Einzelbilder erzeugt.'
       : 'Wähle einen Partikelentwurf. Alle Varianten laufen als Endlosschleife.'}</p>
     <div class="ki-choices">
       ${drafts.map((d, i) => `<div class="ki-choice">
@@ -2716,7 +2984,17 @@ function bindUi() {
   });
   let st = null;
   $('#search').addEventListener('input', (e) => { clearTimeout(st); st = setTimeout(() => { S.search = e.target.value.trim(); renderGrid(); }, 150); });
-  $('#grid').addEventListener('click', (e) => { const t = e.target.closest('.tile'); if (t) openTexture(t.dataset.p); });
+  $('#grid').addEventListener('click', (e) => {
+    const g = e.target.closest('.sub-head');
+    if (g) { toggleGroup(g.dataset.group); return; }
+    const a = e.target.closest('[data-groups]');
+    if (a) { setAllGroups(a.dataset.groups === 'open'); return; }
+    const t = e.target.closest('.tile');
+    if (!t) return;
+    // Im Tab "Verzaubert": Klick auf ein Item = Verzauberung waehlen
+    if (S.cat === 'enchant' && !S.search && !t.dataset.p.startsWith('item/verzaubert/')) { enchantDialog(t.dataset.p); return; }
+    openTexture(t.dataset.p);
+  });
 
   $('#tools').addEventListener('click', (e) => {
     const t = e.target.closest('.tool'); if (t) setTool(t.dataset.tool);

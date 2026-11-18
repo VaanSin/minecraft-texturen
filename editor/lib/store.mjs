@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ZipReader } from './zip.mjs';
 import { decodePng, encodePng } from './png.mjs';
+import { VARIANT, MANIFEST, parseVariant, versionLevel, buildFiles, enchantTable } from './verzaubert.mjs';
 
 const TEX = 'assets/minecraft/textures/';
 // Neue Themen heissen "Thema-<Name>"; die ersten hiessen "Border-<Name>" und gehen weiter.
@@ -120,7 +121,7 @@ export class Store {
     const src = copyFrom && copyFrom !== 'normal' ? this.theme(copyFrom) : null;
     if (src) {
       fs.cpSync(path.join(src.dir, 'assets'), path.join(dir, 'assets'), { recursive: true });
-      if (fs.existsSync(path.join(src.dir, 'pack.png'))) fs.copyFileSync(path.join(src.dir, 'pack.png'), path.join(dir, 'pack.png'));
+      for (const f of ['pack.png', MANIFEST]) if (fs.existsSync(path.join(src.dir, f))) fs.copyFileSync(path.join(src.dir, f), path.join(dir, f));
     } else {
       fs.writeFileSync(path.join(dir, 'pack.png'), packIcon(name));
     }
@@ -161,12 +162,14 @@ export class Store {
       if (fs.existsSync(from + '.mcmeta')) fs.copyFileSync(from + '.mcmeta', to + '.mcmeta');
       copied++;
     }
+    this.syncEnchanted({ dir: dst });
     return { key, copied, skipped };
   }
 
   /** Passt eine Textur aus einer anderen Version hierher? (gleicher Pfad, gleiches Seitenverhaeltnis wie hier im Original) */
   fitsHere(rel, file, srcStore) {
     if (EXTRA.test(rel)) return true; // Zusatzbilder der /thema-Mod passen ueberall
+    if (VARIANT.test(rel)) return this.variantOk(rel); // verzauberte Items: wenn es das Item hier gibt
     if (!this.vanillaSet.has(rel)) return false;
     if (srcStore && srcStore.version === this.version) return true;
     try {
@@ -318,14 +321,19 @@ export class Store {
 
   pixels(themeKeyName, rel) {
     rel = safeRel(rel);
-    const eff = this.effectiveBytes(themeKeyName, rel);
-    if (!eff) throw new Error('Textur nicht gefunden: ' + rel);
+    let eff = this.effectiveBytes(themeKeyName, rel);
+    // Verzaubertes Item, das es noch nicht gibt: mit dem normalen Item-Bild anfangen
+    const variant = parseVariant(rel);
+    const baseRel = variant ? `item/${variant.item}.png` : rel;
+    if (!eff && variant && this.variantOk(rel)) eff = { ...this.effectiveBytes(themeKeyName, baseRel), source: 'basis' };
+    if (!eff?.bytes) throw new Error('Textur nicht gefunden: ' + rel);
     const img = decodePng(eff.bytes);
     const t = this.theme(themeKeyName);
     let mcmeta = null;
     if (t && fs.existsSync(this.packFile(t, rel) + '.mcmeta')) {
       try { mcmeta = JSON.parse(fs.readFileSync(this.packFile(t, rel) + '.mcmeta', 'utf8')); } catch { mcmeta = null; }
     }
+    if (variant) rel = baseRel; // Original zum Vergleichen = normales Item
     const van = this.vanillaImage(rel);
     return {
       w: img.width, h: img.height, data: Buffer.from(img.data).toString('base64'), source: eff.source,
@@ -344,7 +352,9 @@ export class Store {
     const t = this.theme(themeKeyName);
     if (!t) throw new Error('Im Thema "Normal" kann nichts gespeichert werden. Bitte ein Thema wählen.');
     const file = this.packFile(t, rel);
-    if (!this.vanillaSet.has(rel) && !EXTRA.test(rel) && !fs.existsSync(file)) throw new Error(`Diese Textur gibt es in Minecraft ${this.version} nicht.`);
+    const variant = VARIANT.test(rel);
+    if (variant && !this.variantOk(rel)) throw new Error(`Verzauberte Item-Bilder gehen erst ab Minecraft 1.21.4 (hier: ${this.version}).`);
+    if (!variant && !this.vanillaSet.has(rel) && !EXTRA.test(rel) && !fs.existsSync(file)) throw new Error(`Diese Textur gibt es in Minecraft ${this.version} nicht.`);
     // Animations-/GUI-Einstellungen mitnehmen, sonst gehen Animation und Nine-Slice verloren.
     let meta = null, oldW = null;
     if (fs.existsSync(file + '.mcmeta')) {
@@ -370,6 +380,7 @@ export class Store {
     if (metaText) fs.writeFileSync(file + '.mcmeta', metaText, 'utf8');
     else if (fs.existsSync(file + '.mcmeta')) fs.rmSync(file + '.mcmeta'); // Animation entfernt
     this.#mirror(t, rel, png, metaText);
+    if (variant) this.syncEnchanted(t);
     return { bytes: png.length };
   }
 
@@ -383,9 +394,78 @@ export class Store {
     let d = path.dirname(file);
     const stop = path.join(t.dir, 'assets');
     while (d.startsWith(stop) && d !== stop && fs.existsSync(d) && fs.readdirSync(d).length === 0) { fs.rmdirSync(d); d = path.dirname(d); }
+    if (VARIANT.test(rel)) { this.syncEnchanted(t); return; } // gibt es im Original nicht
     const vb = this.vanillaBytes(rel);
     const vm = this.jar.read(TEX + rel + '.mcmeta');
     this.#mirror(t, rel, vb, vm ? vm.toString('utf8') : null, true);
+  }
+
+  // ---------- Verzauberte Items ----------
+  /** Geht diese Verzauberungs-Variante in dieser Version? (Version neu genug, Item gibt es, Verzauberung passt) */
+  variantOk(rel) {
+    const v = parseVariant(rel);
+    const level = versionLevel(this.version);
+    if (!v || !level || !this.vanillaSet.has(`item/${v.item}.png`)) return false;
+    if (level === 'alle') return v.enchants.length === 1 && v.enchants[0] === 'alle';
+    const ok = this.enchantInfo().items[v.item];
+    return !!ok && v.enchants.every((e) => ok.includes(e)) && (v.enchants.length === 1 || !v.enchants.includes('alle'));
+  }
+
+  /** Verzauberungen dieser Version und welche Items sie bekommen koennen (aus dem Jar). */
+  enchantInfo() {
+    if (!this._enchants) {
+      const readJson = (n) => { const b = this.jar.read(n); if (!b) return null; try { return JSON.parse(b.toString('utf8')); } catch { return null; } };
+      this._enchants = { ...enchantTable(this.jar.names(), readJson), level: versionLevel(this.version) };
+    }
+    return this._enchants;
+  }
+
+  /** Varianten eines Themas: [{ item, enchants, rel }] */
+  variants(themeKeyName) {
+    const t = this.theme(themeKeyName);
+    return t ? this.overrides(t.dir).map(parseVariant).filter(Boolean) : [];
+  }
+
+  /**
+   * Item-Definitionen + Modelle fuer alle verzauberten Bilder im Thema neu schreiben. Eigene JSON-Dateien des
+   * Themas (nicht von uns) bleiben die Grundlage; was wir geschrieben haben, steht in mct-verzaubert.json.
+   */
+  syncEnchanted(t) {
+    const manFile = path.join(t.dir, MANIFEST);
+    let old = [], own = {};
+    try { const m = JSON.parse(fs.readFileSync(manFile, 'utf8')); old = m.dateien || []; own = m.eigene || {}; } catch { old = []; }
+    const ours = new Set(old);
+    const readJson = (p) => {
+      if (own[p]) return own[p]; // eigene Datei des Themas, die wir ueberschrieben haben
+      const f = path.join(t.dir, ...p.split('/'));
+      if (!ours.has(p) && fs.existsSync(f)) {
+        try { own[p] = JSON.parse(fs.readFileSync(f, 'utf8')); return own[p]; } catch { return null; }
+      }
+      const b = this.jar.read(p);
+      if (!b) return null;
+      try { return JSON.parse(b.toString('utf8')); } catch { return null; }
+    };
+    const level = versionLevel(this.version);
+    const variants = level ? this.overrides(t.dir).filter((r) => VARIANT.test(r) && this.variantOk(r)).map(parseVariant) : [];
+    const files = buildFiles(variants, readJson, level);
+    for (const [p, obj] of files) {
+      const f = path.join(t.dir, ...p.split('/'));
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.writeFileSync(f, JSON.stringify(obj, null, 2) + '\n', 'utf8');
+    }
+    for (const p of old) {
+      if (files.has(p) || !/^assets\/minecraft\/(items|models\/item\/verzaubert)\//.test(p)) continue;
+      const f = path.join(t.dir, ...p.split('/'));
+      if (own[p]) { fs.writeFileSync(f, JSON.stringify(own[p], null, 2) + '\n', 'utf8'); delete own[p]; continue; } // eigene Datei zurueck
+      if (fs.existsSync(f)) fs.rmSync(f);
+      let d = path.dirname(f);
+      const stop = path.join(t.dir, 'assets');
+      while (d.startsWith(stop) && d !== stop && fs.existsSync(d) && fs.readdirSync(d).length === 0) { fs.rmdirSync(d); d = path.dirname(d); }
+    }
+    for (const p of Object.keys(own)) if (!files.has(p)) delete own[p];
+    if (files.size) fs.writeFileSync(manFile, JSON.stringify({ hinweis: 'Von Minecraft Texturen erzeugt (verzauberte Items)', dateien: [...files.keys()].sort(), eigene: own }, null, 2) + '\n', 'utf8');
+    else if (fs.existsSync(manFile)) fs.rmSync(manFile);
+    return { files: files.size, variants: variants.length };
   }
 
   #mirror(t, rel, png, metaText, vanilla = false) {
